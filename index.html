@@ -292,6 +292,9 @@
 
       async saveExam(examData) {
         const todayStr = new Date().toLocaleDateString("hi-IN", { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+              async saveExam(examData) {
+        const todayStr = new Date().toLocaleDateString("hi-IN", { day: '2-digit', month: '2-digit', year: 'numeric' });
         let docId = examData.id || ("EXAM_" + Date.now());
         const payload = {
           ...examData,
@@ -301,20 +304,18 @@
           createdTimestamp: examData.createdTimestamp || Date.now()
         };
 
-        // 1. तुरंत फोन में सेव करें ताकि 0 सेकंड में अपनी स्क्रीन पर दिखे
-        let exams = getStore("exams").filter(e => e.id !== docId && e.examCode !== payload.examCode);
-        exams.unshift(payload);
-        setStore("exams", exams);
+        // Seedha Firebase Firestore par save karein
+        await db.collection("exams").doc(docId).set(payload, { merge: true });
 
-        // 2. तुरंत Firebase क्लाउड पर भेजें ताकि दूसरे मोबाइल में दिखे
-        try {
-          await db.collection("exams").doc(docId).set(payload, { merge: true });
-        } catch (e) {
-          console.warn("Cloud save error:", e);
+        // Firebase se taaza full list wapas load karein taaki koi purana exam na mite
+        const snap = await db.collection("exams").get();
+        if (!snap.empty) {
+          const cloudList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setStore("exams", cloudList);
         }
 
         return docId;
-      },
+      }, 
 
       async moveToTrash(id) {
         const exams = getStore("exams");
@@ -1466,7 +1467,7 @@
       navigate("student-login");
     }
 
-    function renderTeacherDashboard(c) {
+     async function renderTeacherDashboard(c) {
       if (!state.activeTeacher) return navigate("teacher-login");
 
       const currentU = (state.activeTeacher.username || "").toUpperCase();
@@ -1475,19 +1476,15 @@
                       currentU === "OWNER.KRISHNASIR" || 
                       currentU === "OWNER_KRISHNA";
       
-      let allExams = getStore("exams");
-      let results = getStore("results");
-      let students = getStore("students");
-      let teachers = getStore("teachers");
-
-      // बैकग्राउंड में ताज़ा डेटा अपडेट करें
-      API.getExams().then(() => {});
-      API.getResults().then(() => {});
-      API.getStudents().then(() => {});
-      API.getTeachers().then(() => {});
+      // Direct cloud se saare exams mangwayein taaki ek bhi exam gayab na ho
+      let allExams = await API.getExams();
+      let results = await API.getResults();
+      let students = await API.getStudents();
+      let teachers = await API.getTeachers();
 
       let currentExams = allExams.filter(e => !e.isDeleted);
 
+      // Owner ko sabhi parikshayein dikhengi
       if (!isOwner) {
         currentExams = currentExams.filter(e => 
           String(e.teacherId) === String(state.activeTeacher.id) || 
@@ -1576,23 +1573,23 @@
                     <div>
                       <h4 class="font-bold text-slate-800 text-sm">${e.examName}</h4>
                       <span class="text-[11px] text-indigo-700 font-bold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                        वर्ग: ${Array.isArray(e.classes) ? e.classes.join(" + ") : e.class} • ${e.subject || 'सामान्य'}
+                        वर्ग: ${Array.isArray(e.classes) ? e.classes.join(" + ") : (e.class || 'All')} • ${e.subject || 'सामान्य'}
                       </span>
                     </div>
                     <span class="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">${e.examCode}</span>
                   </div>
 
                   <div class="flex justify-between items-center text-xs text-slate-500 pt-1 font-mono">
-                    <span>प्रश्न: <b>${e.questions.length}</b></span>
+                    <span>प्रश्न: <b>${e.questions ? e.questions.length : 0}</b></span>
                     <span>शिक्षक: <b>${e.teacherName || 'Self'}</b></span>
                   </div>
 
                   <div class="flex flex-wrap items-center gap-1.5 pt-2 border-t mt-2 text-xs font-bold">
                     <button onclick="navigator.clipboard.writeText('${window.location.origin}${window.location.pathname}?exam=${e.examCode}'); alert('परीक्षा लिंक कॉपी हो गया!');" class="bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-lg">Copy Link</button>
-                    <button onclick="editExistingExam('${e.id}')" class="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg">✏ Edit</button>
-                    <button onclick="downloadTeacherPaperPDF('${e.id}')" class="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg">📑 PDF</button>
+                    <button onclick="editExistingExam('${e.id || e.examCode}')" class="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg">✏ Edit</button>
+                    <button onclick="downloadTeacherPaperPDF('${e.id || e.examCode}')" class="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg">📑 PDF</button>
                     <button onclick="state.meritFilterCode = '${e.examCode}'; navigate('merit-list');" class="bg-amber-50 text-amber-800 px-2.5 py-1 rounded-lg">🏆 Merit</button>
-                    <button onclick="confirmMoveToTrash('${e.id}', '${e.examName}')" class="bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg ml-auto">🗑 Delete</button>
+                    <button onclick="confirmMoveToTrash('${e.id || e.examCode}', '${e.examName}')" class="bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg ml-auto">🗑 Delete</button>
                   </div>
                 </div>
               `).join("")}
@@ -1600,8 +1597,8 @@
           </div>
         </div>
       `;
-    }
-
+       } 
+      
     async function renderOwnerManageTeachers(c) {
       const teachers = await API.getTeachers();
       c.innerHTML = `
@@ -1614,57 +1611,6 @@
             <button onclick="navigate('teacher-dash')" class="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-xl font-bold">← Dashboard</button>
           </div>
 
-          <div class="bg-white p-4 rounded-2xl border space-y-3">
-            <h3 class="font-bold text-xs text-slate-700">सभी शिक्षक खाते (${teachers.length})</h3>
-            <div class="space-y-2.5">
-              ${teachers.map(t => {
-                const isHead = t.role === "owner" || t.username.toUpperCase() === OWNER_USERNAME.toUpperCase();
-                const isPending = t.status === "pending";
-                const hasGlobalMerit = Boolean(t.canViewGlobalMerit);
-                return `
-                  <div class="p-3 border rounded-xl flex flex-wrap justify-between items-center text-xs ${isPending ? 'bg-amber-50/70 border-amber-300' : 'bg-slate-50'} gap-2">
-                    <div>
-                      <div class="flex items-center gap-1.5">
-                        <b class="text-slate-800">${t.name}</b>
-                        ${isHead ? '<span class="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded">OWNER</span>' : ''}
-                        ${isPending ? '<span class="text-[9px] bg-rose-500 text-white font-bold px-1.5 py-0.5 rounded animate-pulse">अनुमोदन बाकी (Pending)</span>' : '<span class="text-[9px] bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded">सक्रिय (Approved)</span>'}
-                      </div>
-                      <span class="block text-slate-600 font-mono text-[11px] mt-0.5">
-                        Username: <b class="text-indigo-700">${t.username}</b> | पासवर्ड: <b class="text-emerald-700">${t.password}</b> | ईमेल: ${t.email || 'N/A'}
-                      </span>
-                      <span class="block text-slate-500 font-mono text-[10px] mt-0.5">
-                        🕒 जुड़ने का समय: <b>${t.joinedFull || 'N/A'}</b>
-                       </span>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2">
-                      ${isPending ? `
-                        <button onclick="approveTeacherAccount('${t.username}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl font-bold text-[11px] shadow">
-                          ✓ स्वीकृत करें (Approve)
-                        </button>
-                      ` : `
-                        <button onclick="state.ownerInspectTeacherId='${t.id}'; navigate('teacher-dash');" class="bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-xl font-bold text-[11px]">
-                          🔍 परीक्षाएँ देखें
-                        </button>
-                        ${!isHead ? `
-                          <button onclick="toggleTeacherGlobalMerit('${t.username}')" class="px-2.5 py-1.5 rounded-xl font-bold text-[11px] border ${hasGlobalMerit ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-slate-100 text-slate-700 border-slate-300'}">
-                            ${hasGlobalMerit ? '🌐 सभी की मेरिट बंद करें' : '🌐 सभी की मेरिट अनुमति दें'}
-                          </button>
-                        ` : ''}
-                      `}
-                      ${!isHead ? `
-                        <button onclick="confirmDeleteTeacherAccount('${t.username}')" class="bg-rose-50 text-rose-700 border border-rose-200 px-3 py-1.5 rounded-xl font-bold text-[11px]">
-                          🗑️ खाता हटाएँ
-                        </button>
-                      ` : ''}
-                    </div>
-                  </div>
-                `;
-              }).join("")}
-            </div>
-          </div>
-        </div>
-      `;
-    }
 
     async function toggleTeacherGlobalMerit(username) {
       const teachers = await API.getTeachers();
