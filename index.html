@@ -241,32 +241,19 @@
         try { await db.collection("students").doc(username.toUpperCase()).delete(); } catch(e) {}
       },
 
-      async getExams() {
-        const fifteenDaysMs = 15 * 24 * 60 * 60 * 1000;
-        const now = Date.now();
-
+          async getExams() {
         try {
           const snap = await db.collection("exams").get();
           if (!snap.empty) {
-            const cloudList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            const valid = cloudList.filter(e => {
-              if (e.isDeleted && e.deletedTimestamp && (now - e.deletedTimestamp > fifteenDaysMs)) return false;
-              return true;
-            });
-            setStore("exams", valid);
-            return valid;
+            const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            return list.filter(e => !e.isDeleted);
           }
         } catch (e) {
-          console.warn("Firestore fetch error:", e);
+          console.warn("Direct exams fetch error:", e);
         }
-
-        let local = getStore("exams");
-        return local.filter(e => {
-          if (e.isDeleted && e.deletedTimestamp && (now - e.deletedTimestamp > fifteenDaysMs)) return false;
-          return true;
-        });
+        return getStore("exams").filter(e => !e.isDeleted);
       },
-
+      
       async getExamByCode(code) {
         const clean = (code || "").trim().toUpperCase();
         const exams = await this.getExams();
@@ -1390,7 +1377,7 @@
       localStorage.removeItem("sep_teacher");
       navigate("student-login");
     }
-      async function renderTeacherDashboard(c) {
+         async function renderTeacherDashboard(c) {
       if (!state.activeTeacher) return navigate("teacher-login");
 
       const currentU = (state.activeTeacher.username || "").toUpperCase();
@@ -1399,10 +1386,27 @@
                       currentU === "OWNER.KRISHNASIR" || 
                       currentU === "OWNER_KRISHNA";
       
-      let allExams = await API.getExams();
-      let results = await API.getResults();
-      let students = await API.getStudents();
-      let teachers = await API.getTeachers();
+      // Loading state taaki screen safed na ho
+      c.innerHTML = `
+        <div class="text-center py-20">
+          <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-indigo-600 border-t-transparent"></div>
+          <p class="text-xs font-bold text-slate-500 mt-3">डेटाबेस से लोड हो रहा है, कृपया प्रतीक्षा करें...</p>
+        </div>
+      `;
+
+      let allExams = [];
+      let results = [];
+      let students = [];
+      let teachers = [];
+
+      try {
+        allExams = await API.getExams();
+        results = await API.getResults();
+        students = await API.getStudents();
+        teachers = await API.getTeachers();
+      } catch (err) {
+        console.error("Dashboard data load error:", err);
+      }
 
       let currentExams = allExams.filter(e => !e.isDeleted);
 
@@ -1416,7 +1420,7 @@
       }
 
       let filteredExams = currentExams.slice();
-      if (state.examSearchQuery.trim()) {
+      if (state.examSearchQuery && state.examSearchQuery.trim()) {
         const q = state.examSearchQuery.toLowerCase().trim();
         filteredExams = filteredExams.filter(e => 
           (e.examName || "").toLowerCase().includes(q) || 
@@ -1425,6 +1429,7 @@
           (e.chapter || "").toLowerCase().includes(q)
         );
       }
+
       if (state.examSortOrder === "az") {
         filteredExams.sort((a, b) => (b.createdTimestamp || 0) - (a.createdTimestamp || 0));
       } else {
@@ -1478,23 +1483,23 @@
               </div>
             </div>
 
-            <input type="text" value="${state.examSearchQuery}" oninput="state.examSearchQuery = this.value; renderTeacherDashboard(document.getElementById('app'));" placeholder="🔍 विषय, अध्याय, नाम या कोड से खोजें..." class="w-full p-2.5 border rounded-xl text-xs bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500" />
+            <input type="text" value="${state.examSearchQuery || ''}" oninput="state.examSearchQuery = this.value; renderTeacherDashboard(document.getElementById('app'));" placeholder="🔍 विषय, अध्याय, नाम या कोड से खोजें..." class="w-full p-2.5 border rounded-xl text-xs bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500" />
 
             <div class="grid md:grid-cols-2 gap-3.5">
               ${filteredExams.length === 0 ? '<p class="text-xs text-slate-400 py-6 col-span-2 text-center">कोई परीक्षा नहीं मिली।</p>' : filteredExams.map(e => `
                 <div class="border rounded-2xl p-4 bg-slate-50 space-y-2 relative">
                   <div class="flex justify-between items-start">
                     <div>
-                      <h4 class="font-bold text-slate-800 text-sm">${e.examName}</h4>
+                      <h4 class="font-bold text-slate-800 text-sm">${e.examName || 'Untitled Exam'}</h4>
                       <span class="text-[11px] text-indigo-700 font-bold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
                         वर्ग: ${Array.isArray(e.classes) ? e.classes.join(" + ") : (e.class || 'All')} • ${e.subject || 'सामान्य'}
                       </span>
                     </div>
-                    <span class="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">${e.examCode}</span>
+                    <span class="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">${e.examCode || 'N/A'}</span>
                   </div>
 
                   <div class="flex justify-between items-center text-xs text-slate-500 pt-1 font-mono">
-                    <span>प्रश्न: <b>${e.questions ? e.questions.length : 0}</b></span>
+                    <span>प्रश्न: <b>${(e.questions && e.questions.length) || 0}</b></span>
                     <span>शिक्षक: <b>${e.teacherName || 'Self'}</b></span>
                   </div>
 
@@ -1503,7 +1508,7 @@
                     <button onclick="editExistingExam('${e.id || e.examCode}')" class="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg">✏ Edit</button>
                     <button onclick="downloadTeacherPaperPDF('${e.id || e.examCode}')" class="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg">📑 PDF</button>
                     <button onclick="state.meritFilterCode = '${e.examCode}'; navigate('merit-list');" class="bg-amber-50 text-amber-800 px-2.5 py-1 rounded-lg">🏆 Merit</button>
-                    <button onclick="confirmMoveToTrash('${e.id || e.examCode}', '${e.examName}')" class="bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg ml-auto">🗑 Delete</button>
+                    <button onclick="confirmMoveToTrash('${e.id || e.examCode}', '${e.examName || ''}')" class="bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg ml-auto">🗑 Delete</button>
                   </div>
                 </div>
               `).join("")}
@@ -1511,8 +1516,8 @@
           </div>
         </div>
       `;
-    }
-
+    } 
+          
     async function renderOwnerManageTeachers(c) {
       const teachers = await API.getTeachers();
       c.innerHTML = `
