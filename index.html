@@ -58,6 +58,8 @@
   <main id="app" class="flex-grow max-w-5xl w-full mx-auto p-3.5 md:p-6"></main>
 
   <div id="modalContainer" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4 z-50"></div>
+
+  <!-- चैट मोडल -->
   <div id="chatModalContainer" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl max-w-md w-full p-4 shadow-2xl flex flex-col h-[520px]">
       <div class="flex justify-between items-center border-b pb-2.5">
@@ -78,6 +80,7 @@
     </div>
   </div>
 
+  <!-- फ़ोटो क्रॉप मोडल -->
   <div id="cropModalContainer" class="fixed inset-0 bg-slate-900/75 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
     <div class="bg-white rounded-3xl max-w-md w-full p-4 shadow-2xl space-y-3">
       <div class="flex justify-between items-center border-b pb-2">
@@ -96,8 +99,8 @@
       </div>
     </div>
   </div>
-
-  <script>
+    <script>
+    // आपकी असली Firebase चाबी के साथ कॉन्फ़िगरेशन
     const firebaseConfig = {
       apiKey: "AIzaSyCNZQE09U86piWrHItnrl6gQd170b0",
       authDomain: "online-smartexam.firebaseapp.com",
@@ -121,7 +124,7 @@
       view: "student-login",
       activeTeacher: JSON.parse(localStorage.getItem("sep_teacher")) || null,
       activeStudent: JSON.parse(localStorage.getItem("sep_student")) || null,
-      selectedClassFilter: "All",
+      selectedClassFilter: "Class 12 Science",
       activeStudentExam: null,
       studentData: null,
       examTimerInterval: null,
@@ -132,6 +135,7 @@
       builderExam: null,
       examSortOrder: "az",
       examSearchQuery: "",
+      examClassFilter: "All",
       isPublishingLock: false,
       cropTargetType: "avatar",
       ownerInspectTeacherId: null
@@ -154,6 +158,19 @@
     function getStore(key) {
       try {
         let data = JSON.parse(localStorage.getItem("sep_krishna_" + key) || "null");
+        if (!data || data.length === 0) {
+          const oldKeys = ["sep_final_" + key, "sep_main_" + key, "sep_v8_" + key, "sep_v7_" + key, "sep_store_" + key];
+          for (let ok of oldKeys) {
+            try {
+              let oldVal = JSON.parse(localStorage.getItem(ok) || "[]");
+              if (Array.isArray(oldVal) && oldVal.length > 0) {
+                data = oldVal;
+                localStorage.setItem("sep_krishna_" + key, JSON.stringify(data));
+                break;
+              }
+            } catch(e) {}
+          }
+        }
         return Array.isArray(data) ? data : [];
       } catch (e) { return []; }
     }
@@ -161,6 +178,7 @@
     function setStore(key, data) {
       try { localStorage.setItem("sep_krishna_" + key, JSON.stringify(data || [])); } catch (e) {}
     }
+
     const API = {
       async getTeachers() {
         let local = getStore("teachers");
@@ -182,17 +200,15 @@
           setStore("teachers", local);
         }
 
-        try {
-          const snap = await db.collection("teachers").get();
+        db.collection("teachers").get().then(snap => {
           if (!snap.empty) {
             const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             const merged = new Map();
             local.forEach(t => merged.set(t.username.toUpperCase(), t));
             list.forEach(t => merged.set(t.username.toUpperCase(), t));
-            local = Array.from(merged.values()).filter(t => t.username !== "OWNER_KRISHNA");
-            setStore("teachers", local);
+            setStore("teachers", Array.from(merged.values()).filter(t => t.username !== "OWNER_KRISHNA"));
           }
-        } catch(e) {}
+        }).catch(() => {});
 
         return local;
       },
@@ -214,17 +230,15 @@
 
       async getStudents() {
         let local = getStore("students");
-        try {
-          const snap = await db.collection("students").get();
+        db.collection("students").get().then(snap => {
           if (!snap.empty) {
             const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             const map = new Map();
             local.forEach(s => map.set(s.username.toUpperCase(), s));
             list.forEach(s => map.set(s.username.toUpperCase(), s));
-            local = Array.from(map.values());
-            setStore("students", local);
+            setStore("students", Array.from(map.values()));
           }
-        } catch(e) {}
+        }).catch(() => {});
         return local;
       },
 
@@ -232,7 +246,22 @@
         let list = getStore("students").filter(s => s.username.toUpperCase() !== stu.username.toUpperCase());
         list.push(stu);
         setStore("students", list);
-        try { await db.collection("students").doc(stu.username.toUpperCase()).set(stu, { merge: true }); } catch(e) {}
+        await db.collection("students").doc(stu.username.toUpperCase()).set(stu, { merge: true });
+      },
+      async logStudentLogin(stu) {
+        const now = Date.now();
+        const entry = { username: stu.username, studentName: stu.name, sClass: stu.sClass || "", timestamp: now,
+          date: new Date(now).toLocaleDateString("hi-IN"), time: new Date(now).toLocaleTimeString("hi-IN", {hour:"2-digit", minute:"2-digit", second:"2-digit"}) };
+        try { await db.collection("studentLoginHistory").add(entry); } catch(e) { console.warn("Login history save failed", e); }
+        const local = getStore("studentLoginHistory"); local.unshift(entry); setStore("studentLoginHistory", local);
+      },
+      async getStudentLoginHistory(username) {
+        try {
+          const snap = await db.collection("studentLoginHistory").where("username", "==", username).get();
+          return snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        } catch(e) {
+          return getStore("studentLoginHistory").filter(x => (x.username||"").toUpperCase() === (username||"").toUpperCase()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));
+        }
       },
 
       async deleteStudent(username) {
@@ -241,17 +270,32 @@
         try { await db.collection("students").doc(username.toUpperCase()).delete(); } catch(e) {}
       },
 
-          async getExams() {
+      // सुपर-फास्ट और रियल-टाइम एग्ज़ाम लोडर
+            async getExams() {
+        const fifteenDaysMs = 15 * 24 * 60 * 60 * 1000;
+        const now = Date.now();
+
         try {
+          // Seedha Firebase Firestore ke exams collection se bina kisi mapping bug ke laayein
           const snap = await db.collection("exams").get();
-          if (!snap.empty) {
-            const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            return list.filter(e => !e.isDeleted);
-          }
+          const cloudList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          // Firebase is the source of truth; editing one document must not hide other exams.
+          const validExams = cloudList.filter(e => {
+            if (e.isDeleted && e.deletedTimestamp && (now - e.deletedTimestamp > fifteenDaysMs)) return false;
+            return true;
+          });
+          setStore("exams", validExams);
+          return validExams;
         } catch (e) {
-          console.warn("Direct exams fetch error:", e);
+          console.warn("Firestore fetch error:", e);
         }
-        return getStore("exams").filter(e => !e.isDeleted);
+
+        // Offline fallback
+        let local = getStore("exams");
+        return local.filter(e => {
+          if (e.isDeleted && e.deletedTimestamp && (now - e.deletedTimestamp > fifteenDaysMs)) return false;
+          return true;
+        });
       },
       
       async getExamByCode(code) {
@@ -271,57 +315,71 @@
           createdTimestamp: examData.createdTimestamp || Date.now()
         };
 
-        await db.collection("exams").doc(docId).set(payload, { merge: true });
+        // 1. तुरंत फोन में सेव करें ताकि 0 सेकंड में अपनी स्क्रीन पर दिखे
+        let exams = getStore("exams").filter(e => String(e.id) !== String(docId));
+        exams.unshift(payload);
+        setStore("exams", exams);
 
-        const snap = await db.collection("exams").get();
-        if (!snap.empty) {
-          const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          setStore("exams", list);
+        // 2. तुरंत Firebase क्लाउड पर भेजें ताकि दूसरे मोबाइल में दिखे
+        try {
+          await db.collection("exams").doc(docId).set(payload, { merge: true });
+        } catch (e) {
+          console.warn("Cloud save error:", e);
         }
 
         return docId;
       },
 
       async moveToTrash(id) {
+        const exams = getStore("exams");
+        const item = exams.find(e => e.id === id);
+        if (item) {
+          item.isDeleted = true;
+          item.deletedTimestamp = Date.now();
+          item.deletedDate = new Date().toLocaleDateString("hi-IN");
+          setStore("exams", exams);
+        }
         try { await db.collection("exams").doc(id).set({ isDeleted: true, deletedTimestamp: Date.now() }, { merge: true }); } catch (e) {}
-        let exams = await this.getExams();
-        return exams;
       },
 
       async restoreExam(id) {
+        const exams = getStore("exams");
+        const item = exams.find(e => e.id === id);
+        if (item) {
+          item.isDeleted = false;
+          item.deletedTimestamp = null;
+          setStore("exams", exams);
+        }
         try { await db.collection("exams").doc(id).set({ isDeleted: false, deletedTimestamp: null }, { merge: true }); } catch (e) {}
-        let exams = await this.getExams();
-        return exams;
       },
 
       async getResults() {
-        let local = getStore("results");
-        try {
-          const snap = await db.collection("results").get();
+        const local = getStore("results");
+        db.collection("results").get().then(snap => {
           if (!snap.empty) {
-            local = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            setStore("results", local);
+            const cloudList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            setStore("results", cloudList);
           }
-        } catch(e) {}
+        }).catch(() => {});
         return local;
       },
 
       async submitResult(resultData) {
         let resId = "RES_" + Date.now();
         resultData.id = resId;
+        const results = getStore("results");
+        results.unshift(resultData);
+        setStore("results", results);
+
         try {
           const res = await db.collection("results").add(resultData);
           resultData.id = res.id;
         } catch (e) {}
-
-        const results = getStore("results");
-        results.unshift(resultData);
-        setStore("results", results);
         return resultData.id;
       },
 
       async deleteResult(id) {
-        let results = getStore("results").filter(r => r.id !== id);
+        const results = getStore("results").filter(r => r.id !== id);
         setStore("results", results);
         try { await db.collection("results").doc(id).delete(); } catch(e) {}
       },
@@ -341,8 +399,19 @@
         localStorage.setItem("sep_notice", JSON.stringify({ text, timestamp: Date.now() }));
       }
     };
-    function navigate(v) {
+
+    // रियल-टाइम लिसनर (जब भी कोई नया एग्जाम बने, बिना रिफ्रेश किए सभी मोबाइलों में आ जाए)
+    try {
+      db.collection("exams").onSnapshot(snap => {
+        let list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setStore("exams", list);
+        if (state.view === "student-dashboard") filterStudentExamsRealtime();
+        if (state.view === "teacher-dash") renderTeacherDashboard(document.getElementById("app"));
+      });
+    } catch(e) {}
+        function navigate(v) {
       state.view = v;
+      sessionStorage.setItem("sep_view", v);
       renderApp();
     }
 
@@ -427,11 +496,11 @@
           <div class="space-y-3 text-xs">
             <div>
               <label class="font-bold text-slate-700">यूज़रनेम (Username) *</label>
-              <input type="text" id="stuLogUser" class="w-full p-3 border rounded-xl mt-1 font-bold outline-none focus:ring-2 focus:ring-indigo-500 uppercase" />
+              <input type="text" id="stuLogUser" placeholder="" class="w-full p-3 border rounded-xl mt-1 font-bold outline-none focus:ring-2 focus:ring-indigo-500 uppercase" />
             </div>
             <div>
               <label class="font-bold text-slate-700">पासवर्ड (Password) *</label>
-              <input type="password" id="stuLogPass" class="w-full p-3 border rounded-xl mt-1 font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input type="password" id="stuLogPass" placeholder="" class="w-full p-3 border rounded-xl mt-1 font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
 
@@ -447,19 +516,35 @@
       `;
     }
 
-    async function handleStudentLogin() {
+     async function handleStudentLogin() {
       const u = document.getElementById("stuLogUser").value.trim().replace(/\s+/g, '').toUpperCase();
       const p = document.getElementById("stuLogPass").value.trim();
 
       if (!u || !p) return alert("कृपया यूज़रनेम और पासवर्ड दोनों भरें!");
-
+      
       const btn = event.target;
       const oldText = btn.innerText;
       btn.innerText = "जाँच हो रही है...";
       btn.disabled = true;
 
       try {
-        const students = await API.getStudents();
+        // 1. सीधे Firebase क्लाउड से लाइव छात्र डेटा मँगवाएं
+        let students = [];
+        try {
+          const snap = await db.collection("students").get();
+          if (!snap.empty) {
+            students = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            setStore("students", students);
+          }
+        } catch (err) {
+          console.warn("Cloud student fetch error:", err);
+        }
+
+        // अगर क्लाउड धीमा है तो लोकल से मिलाएँ
+        if (students.length === 0) {
+          students = await API.getStudents();
+        }
+
         btn.innerText = oldText;
         btn.disabled = false;
 
@@ -470,19 +555,26 @@
 
         const match = students.find(s => (s.username || '').replace(/\s+/g, '').toUpperCase() === u);
 
-        if (!match) return alert("❌ यह यूज़रनेम पंजीकृत नहीं है! कृपया पहले 'नया खाता बनाएँ'।");
-        if (String(match.password).trim() !== String(p).trim()) return alert("❌ गलत पासवर्ड! कृपया सही पासवर्ड दर्ज करें।");
+        if (!match) {
+          return alert("❌ यह यूज़रनेम पंजीकृत नहीं है! कृपया पहले 'नया खाता बनाएँ'।");
+        }
+        
+        if (String(match.password).trim() !== String(p).trim()) {
+          return alert("❌ गलत पासवर्ड! कृपया सही पासवर्ड दर्ज करें।");
+        }
 
+        await API.logStudentLogin(match);
         state.activeStudent = match;
         localStorage.setItem("sep_student", JSON.stringify(match));
-        state.selectedClassFilter = match.sClass || "All";
+        state.selectedClassFilter = match.sClass || "Class 10";
         navigate("student-dashboard");
+
       } catch (e) {
         btn.innerText = oldText;
         btn.disabled = false;
-        alert("त्रुटि: " + e.message);
+        alert("लॉगिन में त्रुटि: " + e.message);
       }
-    }
+    } 
 
     function renderStudentSignup(c) {
       c.innerHTML = `
@@ -495,7 +587,7 @@
           <div class="space-y-3 text-xs">
             <div>
               <label class="font-bold text-slate-700">पूरा नाम *</label>
-              <input type="text" id="suName" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
+              <input type="text" id="suName" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
             </div>
             <div class="grid grid-cols-2 gap-2">
               <div>
@@ -512,16 +604,16 @@
               </div>
               <div>
                 <label class="font-bold text-slate-700">रोल नं. (Optional)</label>
-                <input type="text" id="suRoll" class="w-full p-2.5 border rounded-xl mt-1 outline-none" />
+                <input type="text" id="suRoll" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 outline-none" />
               </div>
             </div>
             <div>
               <label class="font-bold text-slate-700">यूज़रनेम बनाएँ (Unique Username) *</label>
-              <input type="text" id="suUser" class="w-full p-2.5 border rounded-xl mt-1 uppercase font-mono font-bold text-indigo-700 outline-none" />
+              <input type="text" id="suUser" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 uppercase font-mono font-bold text-indigo-700 outline-none" />
             </div>
             <div>
               <label class="font-bold text-slate-700">पासवर्ड बनाएँ (Password) *</label>
-              <input type="password" id="suPass" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
+              <input type="password" id="suPass" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
             </div>
           </div>
 
@@ -543,6 +635,7 @@
       const password = document.getElementById("suPass").value.trim();
 
       if (!name || !username || !password) return alert("कृपया नाम, यूज़रनेम और पासवर्ड अवश्य भरें!");
+      if (username.toUpperCase() === password.toUpperCase()) return alert("यूज़रनेम और पासवर्ड एक जैसे नहीं हो सकते। अलग पासवर्ड रखें।");
 
       const students = await API.getStudents();
       if (students.some(s => s.username.toUpperCase() === username)) {
@@ -576,7 +669,7 @@
         <div class="max-w-md mx-auto bg-white p-6 md:p-8 rounded-3xl shadow-sm border space-y-4">
           <div class="text-center border-b pb-3">
             <h2 class="text-lg font-black text-amber-600">🔑 यूज़रनेम / पासवर्ड सहायता</h2>
-            <p class="text-xs text-slate-500">अपना यूज़रनेम या पासवर्ड खोजें या शिक्षक को समस्या भेजें</p>
+            <p class="text-xs text-slate-500">अपना यूज़रनेम या पासवर्ड आसानी से खोजें या शिक्षक को भेजें</p>
           </div>
 
           <div class="space-y-4 text-xs">
@@ -601,7 +694,10 @@
                 <span class="text-base">🚨</span>
                 <span>विकल्प 3: दोनों भूल गए? (शिक्षक को सीधे समस्या भेजें)</span>
               </div>
+              <p class="text-[11px] text-slate-600">अपना विवरण भरें, आपका संदेश सीधे शिक्षक के पास पहुँच जाएगा:</p>
+              
               <input type="text" id="helpStuName" placeholder="अपना पूरा नाम *" class="w-full p-2 border rounded-xl bg-white font-bold outline-none" />
+              
               <div class="grid grid-cols-2 gap-2">
                 <select id="helpStuClass" class="p-2 border rounded-xl bg-white font-bold text-slate-700 outline-none">
                   <option value="Class 12 Science">Class 12 (Science)</option>
@@ -614,9 +710,11 @@
                 </select>
                 <input type="text" id="helpStuRoll" placeholder="रोल नं. (Optional)" class="p-2 border rounded-xl bg-white outline-none" />
               </div>
+
               <textarea id="helpStuProblem" rows="2" placeholder="अपनी समस्या लिखें" class="w-full p-2 border rounded-xl bg-white text-xs outline-none"></textarea>
-              <button onclick="sendProblemToTeacher()" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-xl shadow transition text-xs">
-                ✉️ शिक्षक को समस्या भेजें (Send to Teacher)
+
+              <button onclick="sendProblemToTeacher()" class="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-xl shadow transition flex items-center justify-center gap-1.5 text-xs">
+                <span>✉️</span> शिक्षक को समस्या भेजें (Send to Teacher)
               </button>
             </div>
           </div>
@@ -638,7 +736,8 @@
 
       const now = new Date();
       const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const messageText = `🚨 [पासवर्ड/यूज़रनेम समस्या]\nविद्यार्थी: ${name}\nवर्ग: ${sClass} (Roll: ${roll})\nविवरण: ${problem || "सर, मैं अपना यूज़रनेम/पासवर्ड भूल गया हूँ, कृपया चेक करें।"}`;
+
+      const messageText = `🚨 [पासवर्ड/यूज़रनेम भूलने की समस्या]\nविद्यार्थी: ${name}\nवर्ग: ${sClass} (Roll: ${roll})\nविवरण: ${problem || "सर, मैं अपना यूज़रनेम और पासवर्ड भूल गया हूँ, कृपया मेरा खाता चेक करके बताएं।"}`;
 
       API.addChat({
         senderName: `${name} (${sClass})`,
@@ -648,7 +747,7 @@
         timestamp: Date.now()
       });
 
-      alert("✅ आपकी समस्या शिक्षक को भेज दी गई है!");
+      alert("✅ आपकी समस्या शिक्षक को भेज दी गई है!\n\nशिक्षक आपका विवरण देखकर चैट में आपका पासवर्ड और यूज़रनेम भेज देंगे।");
       navigate("student-login");
     }
 
@@ -658,7 +757,7 @@
       const students = await API.getStudents();
       const s = students.find(x => x.username.toUpperCase() === u);
       if (s) alert(`विद्यार्थी: ${s.name}\nआपका पासवर्ड है: ${s.password}`);
-      else alert("❌ यह यूज़रनेम नहीं मिला!");
+      else alert("❌ यह यूज़रनेम नहीं मिला! नीचे विकल्प 3 से शिक्षक को समस्या भेजें।");
     }
 
     async function recoverUserByPassword() {
@@ -668,14 +767,14 @@
       const matches = students.filter(x => x.password === p);
       if (matches.length > 0) {
         alert("मिले हुए यूज़रनेम:\n" + matches.map(m => `• ${m.name}: ${m.username}`).join("\n"));
-      } else alert("❌ इस पासवर्ड से कोई खाता नहीं मिला!");
-    }
-    async function renderStudentDashboard(c) {
+      } else alert("❌ इस पासवर्ड से कोई खाता नहीं मिला! नीचे विकल्प 3 से शिक्षक को समस्या भेजें।");
+      }
+          async function renderStudentDashboard(c) {
       if (!state.activeStudent) return navigate("student-login");
 
       const stu = state.activeStudent;
       const allResults = await API.getResults();
-      const myResults = allResults.filter(r => (r.studentUsername || "").toUpperCase() === stu.username.toUpperCase() || (r.studentName || "").toLowerCase() === stu.name.toLowerCase());
+      const myResults = allResults.filter(r => (r.studentUsername || "").toUpperCase() === stu.username.toUpperCase() || r.studentName.toLowerCase() === stu.name.toLowerCase());
 
       const notice = API.getNotice();
       if (notice && notice.text) {
@@ -694,17 +793,17 @@
 
             <div class="bg-indigo-50 border-2 border-indigo-200 p-2.5 rounded-2xl flex items-center gap-2">
               <span class="text-xs font-black text-indigo-900">चयनित वर्ग:</span>
-              <select onchange="state.selectedClassFilter = this.value; filterStudentExamsRealtime();" class="bg-white border rounded-xl px-3 py-1.5 text-xs font-black text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm">
-                <option value="All" ${state.selectedClassFilter === 'All' ? 'selected' : ''}>🌟 सभी वर्ग (All Classes)</option>
-                <option value="Class 12 Science" ${state.selectedClassFilter === 'Class 12 Science' ? 'selected' : ''}>Class 12 (Science)</option>
-                <option value="Class 12 Arts" ${state.selectedClassFilter === 'Class 12 Arts' ? 'selected' : ''}>Class 12 (Arts)</option>
-                <option value="Class 11 Science" ${state.selectedClassFilter === 'Class 11 Science' ? 'selected' : ''}>Class 11 (Science)</option>
-                <option value="Class 11 Arts" ${state.selectedClassFilter === 'Class 11 Arts' ? 'selected' : ''}>Class 11 (Arts)</option>
-                <option value="Class 10" ${state.selectedClassFilter === 'Class 10' ? 'selected' : ''}>Class 10</option>
-                <option value="Class 9" ${state.selectedClassFilter === 'Class 9' ? 'selected' : ''}>Class 9</option>
-                <option value="Class 8" ${state.selectedClassFilter === 'Class 8' ? 'selected' : ''}>Class 8</option>
-              </select>
-            </div>
+      <select onchange="state.selectedClassFilter = this.value; filterStudentExamsRealtime();" class="bg-white border rounded-xl px-3 py-1.5 text-xs font-black text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm">
+      <option value="All">🌟 सभी वर्ग (All Classes)</option>
+       <option value="Class 12 Science" ${state.selectedClassFilter === 'Class 12 Science' ? 'selected' : ''}>Class 12 (Science)</option>
+        <option value="Class 12 Arts" ${state.selectedClassFilter === 'Class 12 Arts' ? 'selected' : ''}>Class 12 (Arts)</option>
+        <option value="Class 11 Science" ${state.selectedClassFilter === 'Class 11 Science' ? 'selected' : ''}>Class 11 (Science)</option>
+        <option value="Class 11 Arts" ${state.selectedClassFilter === 'Class 11 Arts' ? 'selected' : ''}>Class 11 (Arts)</option>
+         <option value="Class 10" ${state.selectedClassFilter === 'Class 10' ? 'selected' : ''}>Class 10</option>
+         <option value="Class 9" ${state.selectedClassFilter === 'Class 9' ? 'selected' : ''}>Class 9</option>
+         <option value="Class 8" ${state.selectedClassFilter === 'Class 8' ? 'selected' : ''}>Class 8</option>
+         </select>
+        </div>
 
             <div class="flex gap-2">
               <button onclick="openChatModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-2 rounded-xl shadow flex items-center gap-1.5">
@@ -735,7 +834,7 @@
                       <span class="font-black text-indigo-700">${r.marks}/${r.totalMarks} (${r.percentage}%)</span>
                       <span class="text-[10px] block font-bold text-amber-600">रैंक: #${r.rank || '1'}</span>
                     </div>
-                    <button onclick="downloadPastResultPDF('${r.id}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-lg font-bold text-[11px] shadow-sm">
+                    <button onclick="downloadPastResultPDF('${r.id}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-lg font-bold text-[11px] shadow-sm flex items-center gap-1">
                       📄 PDF डाउनलोड
                     </button>
                   </div>
@@ -762,30 +861,42 @@
       filterStudentExamsRealtime();
     }
 
-    async function filterStudentExamsRealtime() {
+        async function filterStudentExamsRealtime() {
       const grid = document.getElementById("studentExamsGrid");
       const inp = document.getElementById("stuExamSearchInp");
       if (!grid) return;
 
       const q = inp ? inp.value.toLowerCase().trim() : "";
+      
+      // सीधे मेमोरी और Firebase दोनों से डेटा लेना
       let allExams = await API.getExams();
+      if (!allExams || allExams.length === 0) {
+        allExams = getStore("exams");
+      }
 
+      // सुरक्षित और लचीला क्लास मिलान (Normalize strings)
       const cleanFilter = (state.selectedClassFilter || "").toLowerCase().replace(/[^a-z0-9]/g, '');
 
       let available = allExams.filter(e => {
         if (e.isDeleted) return false;
+        
+        // अगर 'All' चुना है या फ़िल्टर खाली है तो सब दिखाओ
         if (!cleanFilter || cleanFilter === "all" || cleanFilter === "allclasses") return true;
 
         const targetClasses = Array.isArray(e.classes) ? e.classes : (e.class ? e.class.split(",") : []);
-        if (targetClasses.length === 0 || targetClasses.every(c => !c || c.trim() === "")) return true;
+        
+        // अगर परीक्षा में कोई क्लास नहीं भरी गई है, तो भी सबको दिखाएँ
+        if (targetClasses.length === 0) return true;
 
         return targetClasses.some(cl => {
           if (!cl) return false;
           const cleanTarget = String(cl).toLowerCase().replace(/[^a-z0-9]/g, '');
+          // 12 science, 12th science, class 12 science सब आपस में मैच होंगे
           return cleanTarget.includes(cleanFilter) || cleanFilter.includes(cleanTarget);
         });
       });
 
+      // सर्च बार फ़िल्टर
       if (q) {
         available = available.filter(e => 
           (e.examName || "").toLowerCase().includes(q) || 
@@ -794,18 +905,11 @@
         );
       }
 
+      // सॉर्टिंग
       if (state.examSortOrder === "az") {
         available.sort((a, b) => (b.createdTimestamp || 0) - (a.createdTimestamp || 0));
-        document.getElementById("btnSortAZ")?.classList.replace("bg-slate-50", "bg-indigo-600");
-        document.getElementById("btnSortAZ")?.classList.replace("text-slate-600", "text-white");
-        document.getElementById("btnSortZA")?.classList.replace("bg-indigo-600", "bg-slate-50");
-        document.getElementById("btnSortZA")?.classList.replace("text-white", "text-slate-600");
       } else {
         available.sort((a, b) => (a.createdTimestamp || 0) - (b.createdTimestamp || 0));
-        document.getElementById("btnSortZA")?.classList.replace("bg-slate-50", "bg-indigo-600");
-        document.getElementById("btnSortZA")?.classList.replace("text-slate-600", "text-white");
-        document.getElementById("btnSortAZ")?.classList.replace("bg-indigo-600", "bg-slate-50");
-        document.getElementById("btnSortAZ")?.classList.replace("text-white", "text-slate-600");
       }
 
       const header = document.getElementById("availableExamsHeader");
@@ -829,7 +933,7 @@
             <div>
               <h4 class="font-bold text-slate-800 text-sm">${e.examName}</h4>
               <span class="text-[11px] text-indigo-700 font-semibold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                वर्ग: ${Array.isArray(e.classes) ? e.classes.join(" + ") : (e.class || 'All')} • ${e.subject || 'सामान्य'}
+                विषय: ${e.subject || 'अनिवार्य'} ${e.chapter ? '| ' + e.chapter : ''}
               </span>
             </div>
             <span class="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full font-mono">Code: ${e.examCode}</span>
@@ -841,13 +945,14 @@
           </div>
 
           <div class="pt-2 border-t mt-2">
-            <button onclick="startStudentExamDirect('${e.examCode}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-xl text-xs shadow transition">
-              ▶️ परीक्षा शुरू करें (Start Test)
+            <button onclick="startStudentExamDirect('${e.examCode}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 rounded-xl text-xs shadow transition flex items-center justify-center gap-1.5">
+              <span>▶️</span> परीक्षा शुरू करें (Start Test)
             </button>
           </div>
         </div>
       `).join("");
-    }
+        } 
+
     function renderStudentProfile(c) {
       const stu = state.activeStudent;
       c.innerHTML = `
@@ -883,6 +988,7 @@
       const password = document.getElementById("cpPass").value.trim();
 
       if (!name || !username || !password) return alert("सभी फ़ील्ड भरें!");
+      if (username.toUpperCase() === password.toUpperCase()) return alert("यूज़रनेम और पासवर्ड एक जैसे नहीं हो सकते। अलग पासवर्ड रखें।");
       const students = await API.getStudents();
       const others = students.filter(s => s.username.toUpperCase() !== state.activeStudent.username.toUpperCase());
 
@@ -895,7 +1001,7 @@
       state.activeStudent.password = password;
       await API.saveStudent(state.activeStudent);
       localStorage.setItem("sep_student", JSON.stringify(state.activeStudent));
-      alert("यूज़रनेम और पासवर्ड अपडेट हो गया!");
+      alert("यूज़रनेम और पासवर्ड सफलतापूर्वक अपडेट हो गया!");
       navigate("student-dashboard");
     }
 
@@ -909,14 +1015,13 @@
       doc.open();
       doc.write('<!DOCTYPE html><html><head><title>Result - ' + r.studentName + '</title><script src="https://cdn.tailwindcss.com"><\/script></head><body class="p-8">');
       doc.write('<div class="text-center border-b pb-4 mb-4"><h1 class="text-xl font-bold">' + (r.instituteName || 'Smart Exam Portal') + '</h1><h2 class="text-lg font-bold">' + r.examName + ' (' + r.examCode + ')</h2><p class="text-xs text-slate-500">तारीख: ' + r.date + ' | समय लगा: ' + r.timeTaken + '</p></div>');
-      doc.write('<div class="border p-4 rounded-xl mb-4 bg-slate-50 text-xs"><p><b>विद्यार्थी:</b> ' + r.studentName + '</p><p><b>वर्ग:</b> ' + r.studentClass + ' | <b>Roll:</b> ' + r.rollNumber + '</p><p><b>प्राप्तांक:</b> ' + r.marks + ' / ' + r.totalMarks + ' (' + r.percentage + '%)</p><p><b>रैंक:</b> #' + (r.rank || '1') + '</p></div>');
+      doc.write('<div class="border p-4 rounded-xl mb-4 bg-slate-50 text-xs"><p><b>विद्यार्थी:</b> ' + r.studentName + '</p><p><b>वर्ग:</b> ' + r.studentClass + ' | <b>Roll:</b> ' + r.rollNumber + '</p><p><b>प्राप्तांक:</b> ' + r.marks + ' / ' + r.totalMarks + ' (' + r.percentage + '%)</p><p><b>तुलनात्मक रैंक:</b> #' + (r.rank || '1') + '</p></div>');
       doc.write('</body></html>');
       doc.close();
       printWin.focus();
       setTimeout(() => printWin.print(), 800);
-    }
-
-    async function startStudentExamDirect(examCode) {
+        }
+          async function startStudentExamDirect(examCode) {
       const exam = await API.getExamByCode(examCode);
       if (!exam) return alert("परीक्षा नहीं मिली!");
 
@@ -951,7 +1056,7 @@
       if (!ex) return navigate("student-dashboard");
 
       const answeredCount = Object.keys(state.studentData.answers).length;
-      const totalCount = ex.questions ? ex.questions.length : 0;
+      const totalCount = ex.questions.length;
 
       c.innerHTML = `
         <div class="space-y-4 pb-16 student-exam-math">
@@ -974,7 +1079,7 @@
           </div>
 
           <div class="space-y-4">
-            ${(ex.questions || []).map((q, i) => `
+            ${ex.questions.map((q, i) => `
               <div class="bg-white p-5 rounded-2xl border space-y-3 transition" id="qBox_${i}">
                 <div class="font-bold text-sm text-slate-800 flex items-start gap-2">
                   <span class="bg-indigo-100 text-indigo-700 text-xs px-2.5 py-0.5 rounded-md shrink-0">Q${i+1}</span>
@@ -988,7 +1093,7 @@
                 ` : ''}
 
                 <div class="grid md:grid-cols-2 gap-2 text-xs pt-1">
-                  ${(q.options || []).map((opt, oi) => `
+                  ${q.options.map((opt, oi) => `
                     <label class="flex items-center gap-2 p-3 border rounded-xl cursor-pointer hover:bg-slate-50 transition ${state.studentData.answers[i] === oi ? 'border-indigo-600 bg-indigo-50 font-bold text-indigo-900' : ''}">
                       <input type="radio" name="q_${i}" value="${oi}" ${state.studentData.answers[i] === oi ? 'checked' : ''} onchange="selectStudentAnswer(${i}, ${oi})" class="text-indigo-600" />
                       <span>${['A','B','C','D'][oi]}.</span>
@@ -1031,7 +1136,7 @@
       }
 
       if (missingList.length > 0) {
-        alert(`❌ सभी प्रश्न बनाना अनिवार्य है!\n\nप्रश्न नंबर ${missingList.slice(0, 10).join(", ")}${missingList.length > 10 ? ' आदि' : ''} का उत्तर अभी बाकी है।`);
+        alert(`❌ सभी प्रश्न बनाना अनिवार्य है!\n\nप्रश्न नंबर ${missingList.slice(0, 10).join(", ")}${missingList.length > 10 ? ' आदि' : ''} का उत्तर अभी बाकी है। कृपया सभी का उत्तर दें।`);
         const firstMissingBox = document.getElementById(`qBox_${missingList[0] - 1}`);
         if (firstMissingBox) {
           firstMissingBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1040,7 +1145,7 @@
         return;
       }
 
-      openModal("परीक्षा सबमिट करें?", `क्या आप सबमिट करना चाहते हैं?`, () => submitExamFinal());
+      openModal("परीक्षा सबमिट करें?", `आपने सभी ${total} प्रश्नों के उत्तर दे दिए हैं। क्या आप सबमिट करना चाहते हैं?`, () => submitExamFinal());
     }
 
     async function submitExamFinal() {
@@ -1093,7 +1198,7 @@
       state.lastResult = payload;
       navigate("student-result");
     }
-    function renderStudentResult(c) {
+        function renderStudentResult(c) {
       const res = state.lastResult;
       const ex = state.activeStudentExam;
       if (!res || !ex) return navigate("student-dashboard");
@@ -1126,11 +1231,11 @@
             </div>
 
             <div class="flex flex-wrap justify-center gap-2 pt-3 border-t">
-              <button onclick="downloadElementAsImage('studentResultCard', 'Result_${res.studentName}')" class="bg-emerald-600 text-white text-xs font-bold px-3 py-2 rounded-xl shadow">
+              <button onclick="downloadElementAsImage('studentResultCard', 'Result_${res.studentName}')" class="bg-emerald-600 text-white text-xs font-bold px-3 py-2 rounded-xl shadow flex items-center gap-1">
                 🖼️ रिजल्ट फोटो डाउनलोड
               </button>
-              <button onclick="downloadStudentPaperSheet()" class="bg-indigo-600 text-white text-xs font-bold px-3 py-2 rounded-xl shadow">
-                📑 उत्तर पुस्तिका PDF
+              <button onclick="downloadStudentPaperSheet()" class="bg-indigo-600 text-white text-xs font-bold px-3 py-2 rounded-xl shadow flex items-center gap-1">
+                📑 विस्तृत उत्तर पुस्तिका PDF
               </button>
               <button onclick="navigate('student-dashboard')" class="bg-slate-100 text-slate-700 text-xs font-bold px-4 py-2 rounded-xl">
                 मुख्य पृष्ठ पर जाएँ
@@ -1142,7 +1247,7 @@
             <h3 class="font-bold text-sm text-slate-800 flex items-center gap-2">
               <span>📋</span> प्रश्न विश्लेषण विवरण (उत्तर कुंजी)
             </h3>
-            ${(ex.questions || []).map((q, i) => {
+            ${ex.questions.map((q, i) => {
               const uAns = res.answers[i];
               const isCorrect = uAns === q.correctAnswer;
               return `
@@ -1191,10 +1296,10 @@
       const doc = printWin.document;
       doc.open();
       doc.write('<!DOCTYPE html><html><head><title>उत्तर विश्लेषण - ' + res.studentName + '</title><script src="https://cdn.tailwindcss.com"><\/script></head><body class="p-6">');
-      doc.write('<div class="text-center border-b pb-3 mb-4"><h1 class="text-xl font-bold">' + (res.instituteName || '') + '</h1><h2 class="text-lg font-bold">' + res.examName + '</h2><p class="text-xs text-slate-500">विद्यार्थी: ' + res.studentName + ' | प्राप्तांक: ' + res.marks + '/' + res.totalMarks + ' (' + res.percentage + '%)</p></div>');
+      doc.write('<div class="text-center border-b pb-3 mb-4"><h1 class="text-xl font-bold">' + (res.instituteName || '') + '</h1><h2 class="text-lg font-bold">' + res.examName + '</h2><p class="text-xs text-slate-500">विद्यार्थी: ' + res.studentName + ' | प्राप्तांक: ' + res.marks + '/' + res.totalMarks + ' (' + res.percentage + '%) | समय लगा: ' + res.timeTaken + '</p></div>');
       doc.write('<div class="space-y-4 text-xs">');
 
-      (ex.questions || []).forEach((q, i) => {
+      ex.questions.forEach((q, i) => {
         const userAns = res.answers[i];
         const isCorrect = userAns === q.correctAnswer;
         doc.write('<div class="border-b pb-3 space-y-1"><div class="font-bold">Q' + (i+1) + '. ' + q.questionText + '</div>');
@@ -1208,8 +1313,7 @@
       printWin.focus();
       setTimeout(() => printWin.print(), 1000);
     }
-
-    function renderTeacherLogin(c) {
+        function renderTeacherLogin(c) {
       c.innerHTML = `
         <div class="max-w-sm mx-auto bg-white p-6 rounded-3xl border shadow-sm space-y-4">
           <div class="text-center space-y-1">
@@ -1219,11 +1323,11 @@
           <div class="space-y-3 text-xs">
             <div>
               <label class="font-bold">यूज़रनेम (Username) *</label>
-              <input type="text" id="tUser" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none uppercase focus:ring-2 focus:ring-indigo-500" />
+              <input type="text" id="tUser" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none uppercase focus:ring-2 focus:ring-indigo-500" />
             </div>
             <div>
               <label class="font-bold">पासवर्ड (Password) *</label>
-              <input type="password" id="tPass" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
+              <input type="password" id="tPass" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
           <div class="flex justify-between items-center text-xs">
@@ -1251,7 +1355,7 @@
       }
 
       if (matched.status === "pending") {
-        return alert("⏳ आपका खाता अभी 'पेंडिंग' है!\n\nओनर द्वारा स्वीकृत होने के बाद ही लॉगिन कर सकेंगे।");
+        return alert("⏳ आपका खाता अभी 'पेंडिंग' है!\n\nजैसे ही ओनर आपका खाता स्वीकृत (Approve) करेंगे, आप लॉगिन कर सकेंगे।");
       }
 
       if (String(matched.password).trim() !== pass) {
@@ -1274,19 +1378,19 @@
           <div class="space-y-3 text-xs">
             <div>
               <label class="font-bold">शिक्षक का पूरा नाम *</label>
-              <input type="text" id="reqName" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
+              <input type="text" id="reqName" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
             </div>
             <div>
               <label class="font-bold">ईमेल (Email ID) *</label>
-              <input type="email" id="reqEmail" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
+              <input type="email" id="reqEmail" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
             </div>
             <div>
               <label class="font-bold">यूज़रनेम बनाएँ (Username) *</label>
-              <input type="text" id="reqUser" class="w-full p-2.5 border rounded-xl mt-1 font-mono uppercase font-bold outline-none" />
+              <input type="text" id="reqUser" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-mono uppercase font-bold outline-none" />
             </div>
             <div>
               <label class="font-bold">पासवर्ड बनाएँ (Password) *</label>
-              <input type="password" id="reqPass" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
+              <input type="password" id="reqPass" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
             </div>
           </div>
           <button onclick="handleTeacherSignupSubmit()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow text-xs">
@@ -1315,7 +1419,7 @@
       const joinTimeInfo = getJoinTimestamp();
 
       const reqTeacher = {
-        id: "TCHR_" + Date.now(),
+        id: "TCHR_" + btoa(unescape(encodeURIComponent(user))).substring(0, 10),
         name: name,
         email: email,
         username: user,
@@ -1344,7 +1448,7 @@
           <div class="space-y-3 text-xs">
             <div>
               <label class="font-bold">अपना यूज़रनेम या ईमेल दर्ज करें</label>
-              <input type="text" id="tForgotInp" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
+              <input type="text" id="tForgotInp" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
             </div>
           </div>
           <button onclick="handleTeacherForgotLookup()" class="w-full bg-indigo-600 text-white font-bold py-2.5 rounded-xl shadow text-xs">
@@ -1367,7 +1471,7 @@
       if (match) {
         alert(`शिक्षक: ${match.name}\nयूज़रनेम: ${match.username}\nपासवर्ड: ${match.password}`);
       } else {
-        alert("❌ कोई शिक्षक खाता नहीं मिला!");
+        alert("❌ कोई शिक्षक खाता नहीं मिला! कृपया ओनर से संपर्क करें।");
       }
     }
 
@@ -1377,7 +1481,8 @@
       localStorage.removeItem("sep_teacher");
       navigate("student-login");
     }
-         async function renderTeacherDashboard(c) {
+
+    function renderTeacherDashboard(c) {
       if (!state.activeTeacher) return navigate("teacher-login");
 
       const currentU = (state.activeTeacher.username || "").toUpperCase();
@@ -1386,27 +1491,16 @@
                       currentU === "OWNER.KRISHNASIR" || 
                       currentU === "OWNER_KRISHNA";
       
-      // Loading state taaki screen safed na ho
-      c.innerHTML = `
-        <div class="text-center py-20">
-          <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-indigo-600 border-t-transparent"></div>
-          <p class="text-xs font-bold text-slate-500 mt-3">डेटाबेस से लोड हो रहा है, कृपया प्रतीक्षा करें...</p>
-        </div>
-      `;
+      let allExams = getStore("exams");
+      let results = getStore("results");
+      let students = getStore("students");
+      let teachers = getStore("teachers");
 
-      let allExams = [];
-      let results = [];
-      let students = [];
-      let teachers = [];
-
-      try {
-        allExams = await API.getExams();
-        results = await API.getResults();
-        students = await API.getStudents();
-        teachers = await API.getTeachers();
-      } catch (err) {
-        console.error("Dashboard data load error:", err);
-      }
+      // बैकग्राउंड में ताज़ा डेटा अपडेट करें
+      API.getExams().then(() => {});
+      API.getResults().then(() => {});
+      API.getStudents().then(() => {});
+      API.getTeachers().then(() => {});
 
       let currentExams = allExams.filter(e => !e.isDeleted);
 
@@ -1420,16 +1514,22 @@
       }
 
       let filteredExams = currentExams.slice();
-      if (state.examSearchQuery && state.examSearchQuery.trim()) {
+      if (state.examClassFilter && state.examClassFilter !== "All") {
+        filteredExams = filteredExams.filter(e => {
+          const classes = Array.isArray(e.classes) ? e.classes : String(e.class || "").split(",").map(x => x.trim());
+          return classes.some(cl => String(cl).toLowerCase().replace(/[^a-z0-9]/g, "") === state.examClassFilter.toLowerCase().replace(/[^a-z0-9]/g, ""));
+        });
+      }
+      if (state.examSearchQuery.trim()) {
         const q = state.examSearchQuery.toLowerCase().trim();
         filteredExams = filteredExams.filter(e => 
           (e.examName || "").toLowerCase().includes(q) || 
           (e.examCode || "").toLowerCase().includes(q) || 
           (e.subject || "").toLowerCase().includes(q) || 
-          (e.chapter || "").toLowerCase().includes(q)
+          (e.chapter || "").toLowerCase().includes(q) ||
+          (Array.isArray(e.classes) ? e.classes.join(" ") : (e.class || "")).toLowerCase().includes(q)
         );
       }
-
       if (state.examSortOrder === "az") {
         filteredExams.sort((a, b) => (b.createdTimestamp || 0) - (a.createdTimestamp || 0));
       } else {
@@ -1464,6 +1564,13 @@
             </div>
           </div>
 
+          ${isOwner && state.ownerInspectTeacherId ? `
+            <div class="p-3 bg-purple-50 border border-purple-200 rounded-2xl flex justify-between items-center text-xs">
+              <span class="font-bold text-purple-900">🔍 आप वर्तमान में चयनित शिक्षक की परीक्षाओं का निरीक्षण कर रहे हैं।</span>
+              <button onclick="state.ownerInspectTeacherId=null; renderTeacherDashboard(document.getElementById('app'));" class="bg-purple-600 text-white px-3 py-1 rounded-xl font-bold">सभी परीक्षाएं देखें</button>
+            </div>
+          ` : ''}
+
           <div class="grid grid-cols-3 gap-3 text-center">
             <div class="bg-white p-4 rounded-2xl border"><span class="text-xs text-slate-500 font-bold block">सक्रिय परीक्षाएं</span><span class="text-2xl font-black text-indigo-600">${currentExams.length}</span></div>
             <div class="bg-white p-4 rounded-2xl border ${isOwner ? 'cursor-pointer hover:bg-slate-50' : 'cursor-default'}" ${isOwner ? 'onclick="navigate(\'teacher-students\')"' : ''}>
@@ -1483,32 +1590,38 @@
               </div>
             </div>
 
-            <input type="text" value="${state.examSearchQuery || ''}" oninput="state.examSearchQuery = this.value; renderTeacherDashboard(document.getElementById('app'));" placeholder="🔍 विषय, अध्याय, नाम या कोड से खोजें..." class="w-full p-2.5 border rounded-xl text-xs bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500" />
+            <div class="grid md:grid-cols-2 gap-2">
+              <input type="text" value="${state.examSearchQuery}" oninput="state.examSearchQuery = this.value; renderTeacherDashboard(document.getElementById('app'));" placeholder="🔍 विषय, अध्याय, नाम, कोड या वर्ग खोजें..." class="w-full p-2.5 border rounded-xl text-xs bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500" />
+              <select onchange="state.examClassFilter=this.value; renderTeacherDashboard(document.getElementById('app'));" class="w-full p-2.5 border rounded-xl text-xs bg-slate-50 font-bold outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="All" ${state.examClassFilter === 'All' ? 'selected' : ''}>सभी वर्ग</option>
+                ${["Class 12 Science","Class 12 Arts","Class 11 Science","Class 11 Arts","Class 10","Class 9","Class 8"].map(cl => `<option value="${cl}" ${state.examClassFilter === cl ? 'selected' : ''}>${cl.replace('Class ','कक्षा ')}</option>`).join("")}
+              </select>
+            </div>
 
             <div class="grid md:grid-cols-2 gap-3.5">
               ${filteredExams.length === 0 ? '<p class="text-xs text-slate-400 py-6 col-span-2 text-center">कोई परीक्षा नहीं मिली।</p>' : filteredExams.map(e => `
                 <div class="border rounded-2xl p-4 bg-slate-50 space-y-2 relative">
                   <div class="flex justify-between items-start">
                     <div>
-                      <h4 class="font-bold text-slate-800 text-sm">${e.examName || 'Untitled Exam'}</h4>
+                      <h4 class="font-bold text-slate-800 text-sm">${e.examName}</h4>
                       <span class="text-[11px] text-indigo-700 font-bold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                        वर्ग: ${Array.isArray(e.classes) ? e.classes.join(" + ") : (e.class || 'All')} • ${e.subject || 'सामान्य'}
+                        वर्ग: ${Array.isArray(e.classes) ? e.classes.join(" + ") : e.class} • ${e.subject || 'सामान्य'}
                       </span>
                     </div>
-                    <span class="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">${e.examCode || 'N/A'}</span>
+                    <span class="text-[10px] font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">${e.examCode}</span>
                   </div>
 
                   <div class="flex justify-between items-center text-xs text-slate-500 pt-1 font-mono">
-                    <span>प्रश्न: <b>${(e.questions && e.questions.length) || 0}</b></span>
+                    <span>प्रश्न: <b>${e.questions.length}</b></span>
                     <span>शिक्षक: <b>${e.teacherName || 'Self'}</b></span>
                   </div>
 
                   <div class="flex flex-wrap items-center gap-1.5 pt-2 border-t mt-2 text-xs font-bold">
                     <button onclick="navigator.clipboard.writeText('${window.location.origin}${window.location.pathname}?exam=${e.examCode}'); alert('परीक्षा लिंक कॉपी हो गया!');" class="bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-lg">Copy Link</button>
-                    <button onclick="editExistingExam('${e.id || e.examCode}')" class="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg">✏ Edit</button>
-                    <button onclick="downloadTeacherPaperPDF('${e.id || e.examCode}')" class="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg">📑 PDF</button>
+                    <button onclick="editExistingExam('${e.id}')" class="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg">✏ Edit</button>
+                    <button onclick="downloadTeacherPaperPDF('${e.id}')" class="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg">📑 PDF</button>
                     <button onclick="state.meritFilterCode = '${e.examCode}'; navigate('merit-list');" class="bg-amber-50 text-amber-800 px-2.5 py-1 rounded-lg">🏆 Merit</button>
-                    <button onclick="confirmMoveToTrash('${e.id || e.examCode}', '${e.examName || ''}')" class="bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg ml-auto">🗑 Delete</button>
+                    <button onclick="confirmMoveToTrash('${e.id}', '${e.examName}')" class="bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg ml-auto">🗑 Delete</button>
                   </div>
                 </div>
               `).join("")}
@@ -1516,8 +1629,8 @@
           </div>
         </div>
       `;
-    } 
-          
+    }
+
     async function renderOwnerManageTeachers(c) {
       const teachers = await API.getTeachers();
       c.innerHTML = `
@@ -1536,24 +1649,37 @@
               ${teachers.map(t => {
                 const isHead = t.role === "owner" || t.username.toUpperCase() === OWNER_USERNAME.toUpperCase();
                 const isPending = t.status === "pending";
+                const hasGlobalMerit = Boolean(t.canViewGlobalMerit);
                 return `
                   <div class="p-3 border rounded-xl flex flex-wrap justify-between items-center text-xs ${isPending ? 'bg-amber-50/70 border-amber-300' : 'bg-slate-50'} gap-2">
                     <div>
                       <div class="flex items-center gap-1.5">
                         <b class="text-slate-800">${t.name}</b>
                         ${isHead ? '<span class="text-[9px] bg-amber-500 text-white font-bold px-1.5 py-0.5 rounded">OWNER</span>' : ''}
-                        ${isPending ? '<span class="text-[9px] bg-rose-500 text-white font-bold px-1.5 py-0.5 rounded animate-pulse">Pending</span>' : '<span class="text-[9px] bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded">Approved</span>'}
+                        ${isPending ? '<span class="text-[9px] bg-rose-500 text-white font-bold px-1.5 py-0.5 rounded animate-pulse">अनुमोदन बाकी (Pending)</span>' : '<span class="text-[9px] bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded">सक्रिय (Approved)</span>'}
                       </div>
                       <span class="block text-slate-600 font-mono text-[11px] mt-0.5">
-                        Username: <b class="text-indigo-700">${t.username}</b> | पासवर्ड: <b class="text-emerald-700">${t.password}</b>
+                        Username: <b class="text-indigo-700">${t.username}</b> | पासवर्ड: <b class="text-emerald-700">${t.password}</b> | ईमेल: ${t.email || 'N/A'}
                       </span>
+                      <span class="block text-slate-500 font-mono text-[10px] mt-0.5">
+                        🕒 जुड़ने का समय: <b>${t.joinedFull || 'N/A'}</b>
+                       </span>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
                       ${isPending ? `
-                        <button onclick="approveTeacherAccount('${t.username}')" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl font-bold text-[11px] shadow">
+                        <button onclick="approveTeacherAccount('${t.username}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl font-bold text-[11px] shadow">
                           ✓ स्वीकृत करें (Approve)
                         </button>
-                      ` : ''}
+                      ` : `
+                        <button onclick="state.ownerInspectTeacherId='${t.id}'; navigate('teacher-dash');" class="bg-indigo-50 text-indigo-700 border border-indigo-200 px-3 py-1.5 rounded-xl font-bold text-[11px]">
+                          🔍 परीक्षाएँ देखें
+                        </button>
+                        ${!isHead ? `
+                          <button onclick="toggleTeacherGlobalMerit('${t.username}')" class="px-2.5 py-1.5 rounded-xl font-bold text-[11px] border ${hasGlobalMerit ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-slate-100 text-slate-700 border-slate-300'}">
+                            ${hasGlobalMerit ? '🌐 सभी की मेरिट बंद करें' : '🌐 सभी की मेरिट अनुमति दें'}
+                          </button>
+                        ` : ''}
+                      `}
                       ${!isHead ? `
                         <button onclick="confirmDeleteTeacherAccount('${t.username}')" class="bg-rose-50 text-rose-700 border border-rose-200 px-3 py-1.5 rounded-xl font-bold text-[11px]">
                           🗑️ खाता हटाएँ
@@ -1569,13 +1695,25 @@
       `;
     }
 
+    async function toggleTeacherGlobalMerit(username) {
+      const teachers = await API.getTeachers();
+      const t = teachers.find(x => x.username.toUpperCase() === username.toUpperCase());
+      if (!t) return alert("शिक्षक नहीं मिला!");
+
+      t.canViewGlobalMerit = !Boolean(t.canViewGlobalMerit);
+      await API.saveTeacher(t);
+
+      alert(`शिक्षक '${t.name}' के लिए अन्य/सभी शिक्षकों की मेरिट लिस्ट देखने की अनुमति ${t.canViewGlobalMerit ? '✅ चालू कर दी गई है!' : '❌ बंद कर दी गई है!'}`);
+      renderOwnerManageTeachers(document.getElementById("app"));
+    }
+
     async function approveTeacherAccount(user) {
       const teachers = await API.getTeachers();
       const t = teachers.find(x => x.username.toUpperCase() === user.toUpperCase());
       if (t) {
         t.status = "approved";
         await API.saveTeacher(t);
-        alert(`शिक्षक '${t.name}' का खाता स्वीकृत कर दिया गया है!`);
+        alert(`शिक्षक '${t.name}' का खाता स्वीकृत कर दिया गया है! अब वे लॉगिन कर सकेंगे।`);
         renderOwnerManageTeachers(document.getElementById("app"));
       }
     }
@@ -1587,14 +1725,14 @@
         renderOwnerManageTeachers(document.getElementById("app"));
       });
     }
-    function startNewExamCreation() {
+          function startNewExamCreation() {
       state.builderExam = {
         teacherId: state.activeTeacher.id,
         teacherName: state.activeTeacher.name,
         teacherUsername: state.activeTeacher.username,
         instituteName: "",
         examName: "",
-        classes: ["Class 10"],
+        classes: ["Class 12 Science", "Class 12 Arts"],
         subject: "",
         chapter: "",
         examCode: "EX" + Math.floor(100 + Math.random() * 900),
@@ -1615,7 +1753,7 @@
       if (!state.builderExam.classes && state.builderExam.class) {
         state.builderExam.classes = state.builderExam.class.split(",").map(s => s.trim());
       } else if (!Array.isArray(state.builderExam.classes)) {
-        state.builderExam.classes = ["Class 10"];
+        state.builderExam.classes = ["Class 12 Science"];
       }
       navigate("create-exam");
     }
@@ -1644,11 +1782,11 @@
             <div class="grid md:grid-cols-2 gap-3 text-xs">
               <div>
                 <label class="font-bold text-indigo-700">संस्थान का नाम (Institute Name)</label>
-                <input type="text" id="bInstitute" value="${ex.instituteName || ''}" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
+                <input type="text" id="bInstitute" value="${ex.instituteName || ''}" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
               </div>
               <div>
                 <label class="font-bold text-slate-700">Exam Name *</label>
-                <input type="text" id="bName" value="${ex.examName}" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
+                <input type="text" id="bName" value="${ex.examName}" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
               </div>
             </div>
 
@@ -1659,16 +1797,16 @@
               </div>
               <div>
                 <label class="font-bold text-rose-600">Subject (विषय) * अनिवार्य</label>
-                <input type="text" id="bSubject" value="${ex.subject || ''}" class="w-full p-2.5 border-2 border-indigo-200 rounded-xl mt-1 font-bold outline-none" />
+                <input type="text" id="bSubject" value="${ex.subject || ''}" placeholder="" class="w-full p-2.5 border-2 border-indigo-200 rounded-xl mt-1 font-bold outline-none focus:border-indigo-600" />
               </div>
               <div>
                 <label class="font-bold text-slate-700">Chapter / अध्याय (Optional)</label>
-                <input type="text" id="bChapter" value="${ex.chapter || ''}" class="w-full p-2.5 border rounded-xl mt-1 outline-none" />
+                <input type="text" id="bChapter" value="${ex.chapter || ''}" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 outline-none" />
               </div>
             </div>
 
             <div class="bg-indigo-50/60 p-4 rounded-2xl border border-indigo-100 space-y-2">
-              <label class="font-bold text-xs text-indigo-900 block">🎯 किन-किन वर्गों में यह परीक्षा दिखानी है?:</label>
+              <label class="font-bold text-xs text-indigo-900 block">🎯 किन-किन वर्गों में यह परीक्षा दिखानी है? (1 से अधिक वर्ग मर्ज करें):</label>
               <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                 ${availableClasses.map(cls => `
                   <label class="flex items-center gap-2 p-2 bg-white border rounded-xl cursor-pointer">
@@ -1681,28 +1819,46 @@
           </div>
 
           <div class="bg-indigo-50 border-2 border-dashed border-indigo-200 p-5 rounded-3xl space-y-3">
-            <h3 class="font-black text-sm text-indigo-900">⚡ एक साथ प्रश्न लोड करें</h3>
-            <textarea id="bulkTextInput" rows="4" placeholder="1. प्रश्न (A) विकल्प (B) विकल्प (C) विकल्प (D) विकल्प उत्तर: A" class="w-full p-3 border rounded-xl text-xs font-mono"></textarea>
-            <button onclick="processBulkQuestions()" class="bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold px-4 py-2 rounded-xl shadow">
-              Load Questions
-            </button>
+            <div>
+              <h3 class="font-black text-sm text-indigo-900">⚡ एक साथ 100+ प्रश्न यहाँ पेस्ट करें (गणित, भौतिकी, रसायन सूत्र समर्थित)</h3>
+              <p class="text-xs text-indigo-700">फॉर्मेट: 1. प्रश्न (A) विकल्प (B) विकल्प (C) विकल्प (D) विकल्प उत्तर: A</p>
+            </div>
+            <div class="space-y-2">
+              <textarea id="bulkTextInput" rows="5" placeholder="" class="w-full p-3 border rounded-xl text-xs font-mono"></textarea>
+              <button onclick="processBulkQuestions()" class="bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow">
+                ⚡ सभी प्रश्न लोड करें (Load All Questions)
+              </button>
+            </div>
           </div>
 
           <div class="space-y-4" id="questionsContainer">
-            ${(ex.questions || []).map((q, i) => `
+            ${ex.questions.map((q, i) => `
               <div class="bg-white p-5 rounded-3xl border space-y-3 relative shadow-sm" id="qBlock_${i}">
                 <div class="flex justify-between items-center">
                   <span class="font-bold text-xs bg-indigo-600 text-white px-2.5 py-1 rounded-lg">प्रश्न ${i+1}</span>
-                  <button onclick="removeQuestion(${i})" class="text-rose-500 text-xs font-bold p-1.5"><i class="fa-solid fa-trash"></i> हटाएं</button>
+                  <button onclick="removeQuestion(${i})" class="text-rose-500 text-xs font-bold hover:bg-rose-50 p-1.5 rounded"><i class="fa-solid fa-trash"></i> हटाएं</button>
                 </div>
 
-                <textarea id="qText_${i}" class="w-full p-3 border rounded-xl text-sm font-medium outline-none">${q.questionText}</textarea>
+                <textarea id="qText_${i}" placeholder="" class="w-full p-3 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500">${q.questionText}</textarea>
+
+                <div class="bg-slate-50 p-3 rounded-xl border flex flex-wrap items-center gap-3">
+                  <input type="file" id="qPhotoInput_${i}" accept="image/*" onchange="handleQuestionPhotoUpload(event, ${i})" class="hidden" />
+                  <button type="button" onclick="document.getElementById('qPhotoInput_${i}').click()" class="bg-white px-3 py-1.5 border border-indigo-200 rounded-lg text-xs font-bold text-indigo-700 flex items-center gap-1.5 shadow-sm hover:bg-indigo-50">
+                    <i class="fa-solid fa-image"></i> 📷 गैलरी से डायग्राम / फ़ोटो चुनें
+                  </button>
+                  ${q.photo ? `
+                    <div class="flex items-center gap-2">
+                      <img src="${q.photo}" class="h-14 w-20 object-contain rounded-lg border shadow-sm bg-white" />
+                      <button type="button" onclick="removeQuestionPhoto(${i})" class="text-rose-600 text-xs font-bold hover:underline">हटाएं ✕</button>
+                    </div>
+                  ` : '<span class="text-[11px] text-slate-400">कोई फ़ोटो संलग्न नहीं है</span>'}
+                </div>
 
                 <div class="grid md:grid-cols-2 gap-2">
                   ${[0, 1, 2, 3].map(oi => `
                     <div class="flex items-center gap-1.5">
                       <span class="text-xs font-bold text-slate-500">${['A','B','C','D'][oi]}.</span>
-                      <input type="text" id="opt_${i}_${oi}" value="${(q.options && q.options[oi]) || ''}" class="w-full p-2 border rounded-xl text-xs bg-white" />
+                      <input type="text" id="opt_${i}_${oi}" placeholder="" value="${q.options[oi] || ''}" class="w-full p-2 border rounded-xl text-xs bg-white" />
                     </div>
                   `).join("")}
                 </div>
@@ -1714,7 +1870,7 @@
                       ${[0, 1, 2, 3].map(oi => `<option value="${oi}" ${q.correctAnswer === oi ? 'selected' : ''}>विकल्प ${['A','B','C','D'][oi]}</option>`).join("")}
                     </select>
                   </div>
-                  <button type="button" onclick="addNewBlankQuestion(${i+1})" class="bg-indigo-50 text-indigo-700 font-bold px-3 py-1.5 rounded-xl border border-indigo-200 text-xs">
+                  <button type="button" onclick="addNewBlankQuestion(${i+1})" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-3 py-1.5 rounded-xl border border-indigo-200 text-xs">
                     ➕ अगला प्रश्न जोड़ें
                   </button>
                 </div>
@@ -1735,7 +1891,7 @@
       ex.chapter = document.getElementById("bChapter").value.trim();
 
       const checked = Array.from(document.querySelectorAll('input[name="examTargetClasses"]:checked')).map(cb => cb.value);
-      ex.classes = checked.length ? checked : ["Class 10"];
+      ex.classes = checked.length ? checked : ["Class 12 Science"];
       ex.class = ex.classes.join(", ");
 
       ex.questions.forEach((q, i) => {
@@ -1792,17 +1948,36 @@
       }
 
       if (newQuestions.length === 0) return alert("प्रश्नों का सही फॉर्मेट नहीं मिला!");
-      state.builderExam.questions = state.builderExam.questions.concat(newQuestions);
+      if (state.builderExam.questions.length === 1 && !state.builderExam.questions[0].questionText.trim()) {
+        state.builderExam.questions = newQuestions;
+      } else {
+        state.builderExam.questions = state.builderExam.questions.concat(newQuestions);
+      }
       alert(`${newQuestions.length} प्रश्न लोड हो गए!`);
       renderCreateExam(document.getElementById("app"));
     }
 
+    function handleQuestionPhotoUpload(e, i) {
+      const f = e.target.files[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = ev => {
+        syncBuilderInputs();
+        state.builderExam.questions[i].photo = ev.target.result;
+        renderCreateExam(document.getElementById("app"));
+      };
+      r.readAsDataURL(f);
+    }
+    function removeQuestionPhoto(i) {
+      syncBuilderInputs();
+      state.builderExam.questions[i].photo = "";
+      renderCreateExam(document.getElementById("app"));
+    }
     function addNewBlankQuestion(idx) {
       syncBuilderInputs();
       state.builderExam.questions.splice(idx, 0, { questionText: "", photo: "", options: ["","","",""], correctAnswer: 0 });
       renderCreateExam(document.getElementById("app"));
     }
-
     function removeQuestion(i) {
       if (state.builderExam.questions.length <= 1) return alert("कम से कम 1 प्रश्न होना अनिवार्य है!");
       syncBuilderInputs();
@@ -1818,6 +1993,18 @@
       if (!ex.examName) return alert("कृपया परीक्षा का नाम भरें!");
       if (!ex.examCode) return alert("कृपया यूनिक Exam Code भरें!");
       if (!ex.subject) return alert("⚠️ विषय (Subject) भरना अनिवार्य है!");
+      if (!ex.classes || ex.classes.length === 0) return alert("कम से कम 1 वर्ग चुनें!");
+
+      const all = await API.getExams();
+      const isDuplicate = all.some(e => {
+        const isSame = (ex.id && String(e.id) === String(ex.id)) || (e.createdTimestamp === ex.createdTimestamp);
+        if (isSame) return false;
+        return (e.examCode || "").toUpperCase() === ex.examCode.toUpperCase();
+      });
+
+      if (isDuplicate) {
+        return alert("❌ यह Exam Code किसी दूसरी परीक्षा में पहले से उपयोग हो रहा है!");
+      }
 
       state.isPublishingLock = true;
       const btn = document.getElementById("publishSubmitBtn");
@@ -1825,7 +2012,7 @@
 
       try {
         await API.saveExam(ex);
-        alert("परीक्षा प्रकाशित/सुरक्षित हो गई!");
+        alert("परीक्षा प्रकाशित हो गई!");
         navigate("teacher-dash");
       } catch (e) {
         alert("त्रुटि: " + e.message);
@@ -1835,11 +2022,12 @@
     }
 
     function confirmMoveToTrash(id, name) {
-      openModal("परीक्षा हटाएं?", `क्या आप "${name}" को हटाना चाहते हैं?`, async () => {
+      openModal("परीक्षा हटाएं?", `क्या आप "${name}" को हटाना चाहते हैं? यह 15 दिनों तक रीसायकल बिन में रहेगी।`, async () => {
         await API.moveToTrash(id);
-        renderTeacherDashboard(document.getElementById("app"));
+        renderApp();
       });
     }
+
     function renderTeacherProfile(c) {
       const t = state.activeTeacher;
       c.innerHTML = `
@@ -1848,6 +2036,29 @@
             <h2 class="text-sm font-black text-slate-800">👤 शिक्षक प्रोफ़ाइल व सुरक्षा</h2>
             <button onclick="navigate('teacher-dash')" class="text-xs bg-slate-100 px-3 py-1.5 rounded-xl font-bold">← Dashboard</button>
           </div>
+
+          <div class="p-3 bg-slate-50 border rounded-2xl space-y-3">
+            <div class="text-center">
+              <span class="text-xs font-bold text-slate-600 block mb-1">प्रोफ़ाइल फ़ोटो</span>
+              <img src="${t.photo || 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png'}" class="w-16 h-16 rounded-full mx-auto object-cover border-2 border-indigo-600 shadow" />
+              <input type="file" id="pPhotoFile" accept="image/*" onchange="startPhotoCropProcess(event, 'avatar')" class="hidden" />
+              <div class="flex justify-center gap-2 mt-2">
+                <button onclick="document.getElementById('pPhotoFile').click()" class="text-[11px] bg-indigo-50 text-indigo-700 px-3 py-1 rounded-lg font-bold">📷 फ़ोटो बदलें</button>
+                <button onclick="state.activeTeacher.photo=''; localStorage.setItem('sep_teacher', JSON.stringify(state.activeTeacher)); renderTeacherProfile(document.getElementById('app'));" class="text-[11px] bg-rose-50 text-rose-700 px-2 py-1 rounded-lg font-bold">हटाएँ</button>
+              </div>
+            </div>
+
+            <div class="border-t pt-2 text-center">
+              <span class="text-xs font-bold text-slate-600 block mb-1">डैशबोर्ड बैकग्राउंड बैनर</span>
+              ${t.bgPhoto ? `<img src="${t.bgPhoto}" class="h-16 w-full object-cover rounded-xl border mb-2" />` : '<span class="text-[11px] text-slate-400 block mb-1">कोई बैकग्राउंड फ़ोटो नहीं है</span>'}
+              <input type="file" id="pBgPhotoFile" accept="image/*" onchange="handleTeacherBgUpload(event)" class="hidden" />
+              <div class="flex justify-center gap-2">
+                <button onclick="document.getElementById('pBgPhotoFile').click()" class="text-[11px] bg-purple-50 text-purple-700 px-3 py-1 rounded-lg font-bold">🖼️ बैनर चुनें</button>
+                <button onclick="state.activeTeacher.bgPhoto=''; localStorage.setItem('sep_teacher', JSON.stringify(state.activeTeacher)); renderTeacherProfile(document.getElementById('app'));" class="text-[11px] bg-rose-50 text-rose-700 px-2 py-1 rounded-lg font-bold">हटाएँ</button>
+              </div>
+            </div>
+          </div>
+
           <div class="space-y-3 text-xs">
             <div>
               <label class="font-bold">शिक्षक का नाम</label>
@@ -1861,7 +2072,16 @@
               <label class="font-bold">नया पासवर्ड (Password)</label>
               <input type="text" id="tpPass" value="${t.password}" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
             </div>
+            <div>
+              <label class="font-bold">ईमेल (Email ID - बैकअप व रिकवरी हेतु)</label>
+              <input type="email" id="tpEmail" value="${t.email || ''}" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
+            </div>
+            <div>
+              <label class="font-bold">संस्थान का नाम</label>
+              <input type="text" id="tpInst" value="${t.institute || ''}" placeholder="" class="w-full p-2.5 border rounded-xl mt-1 font-bold outline-none" />
+            </div>
           </div>
+
           <button onclick="saveTeacherProfileData()" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl shadow text-xs">
             बदलाव सुरक्षित करें (Save Profile)
           </button>
@@ -1873,28 +2093,105 @@
       const name = document.getElementById("tpName").value.trim();
       const user = document.getElementById("tpUser").value.trim().toUpperCase();
       const pass = document.getElementById("tpPass").value.trim();
+      const email = document.getElementById("tpEmail").value.trim().toLowerCase();
+      const inst = document.getElementById("tpInst").value.trim();
 
       if (!name || !user || !pass) return alert("कृपया नाम, यूज़रनेम और पासवर्ड अवश्य भरें!");
+
+      const teachers = await API.getTeachers();
+      const others = teachers.filter(t => t.username.toUpperCase() !== state.activeTeacher.username.toUpperCase());
+
+      if (others.some(t => t.username.toUpperCase() === user)) {
+        return alert("❌ यह नया यूज़रनेम किसी अन्य शिक्षक के पास है!");
+      }
 
       state.activeTeacher.name = name;
       state.activeTeacher.username = user;
       state.activeTeacher.password = pass;
+      state.activeTeacher.email = email;
+      state.activeTeacher.institute = inst;
 
       await API.saveTeacher(state.activeTeacher);
       localStorage.setItem("sep_teacher", JSON.stringify(state.activeTeacher));
-      alert("✅ प्रोफ़ाइल सुरक्षित हो गई!");
+      alert("✅ प्रोफ़ाइल, यूज़रनेम और पासवर्ड सुरक्षित हो गया!");
       navigate("teacher-dash");
     }
 
+    function handleTeacherBgUpload(e) {
+      const f = e.target.files[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = ev => {
+        state.activeTeacher.bgPhoto = ev.target.result;
+        localStorage.setItem("sep_teacher", JSON.stringify(state.activeTeacher));
+        renderTeacherProfile(document.getElementById("app"));
+      };
+      r.readAsDataURL(f);
+    }
+
+    function startPhotoCropProcess(e, targetType) {
+      state.cropTargetType = targetType;
+      const f = e.target.files[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = ev => {
+        document.getElementById("imageToCrop").src = ev.target.result;
+        document.getElementById("cropModalContainer").classList.remove("hidden");
+        document.getElementById("cropModalContainer").classList.add("flex");
+        if (cropperInstance) cropperInstance.destroy();
+        cropperInstance = new Cropper(document.getElementById("imageToCrop"), { aspectRatio: 1, viewMode: 1 });
+      };
+      r.readAsDataURL(f);
+    }
+    function closeCropModal() {
+      if (cropperInstance) cropperInstance.destroy();
+      document.getElementById("cropModalContainer").classList.add("hidden");
+    }
+    function applyCroppedImage() {
+      state.activeTeacher.photo = cropperInstance.getCroppedCanvas({ width: 250, height: 250 }).toDataURL();
+      closeCropModal();
+      renderTeacherProfile(document.getElementById("app"));
+    }
+
     async function renderMeritList(c) {
+      const isOwner = state.activeTeacher && (state.activeTeacher.role === "owner" || state.activeTeacher.username === OWNER_USERNAME);
+
       c.innerHTML = `
         <div class="max-w-5xl mx-auto space-y-4">
-          <div class="flex justify-between items-center bg-white p-4 rounded-2xl border shadow-sm">
+          <div class="flex flex-wrap justify-between items-center bg-white p-4 rounded-2xl border shadow-sm gap-2">
             <div>
               <h2 class="font-black text-amber-600 text-base">🏆 Merit List (मेरिट सूची)</h2>
+              <p class="text-[11px] text-slate-400">तुलनात्मक परिणाम तालिका</p>
             </div>
-            <button onclick="navigate('teacher-dash')" class="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-xl font-bold">← Dashboard</button>
+            <div class="flex flex-wrap gap-2">
+              <button onclick="downloadElementAsImage('meritAreaBox', 'Merit_List')" class="bg-emerald-600 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow flex items-center gap-1">
+                🖼️ फोटो डाउनलोड
+              </button>
+              <button onclick="downloadMeritListPDF()" class="bg-indigo-600 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow flex items-center gap-1">
+                📑 PDF डाउनलोड
+              </button>
+              <button onclick="navigate('teacher-dash')" class="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-xl font-bold">← Dashboard</button>
+            </div>
           </div>
+
+          ${!isOwner ? `
+            <div class="p-2.5 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-800 font-bold flex items-center justify-between">
+              <span>📌 आप अपनी बनाई हुई परीक्षाओं की मेरिट लिस्ट देख रहे हैं।</span>
+            </div>
+          ` : ''}
+
+          <div class="bg-white p-4 rounded-2xl border space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-xs font-bold text-slate-700">क्रमबद्ध करें (Sort):</span>
+              <div class="flex gap-2 text-xs">
+                <button onclick="state.meritSortOrder = 'az'; filterMeritRealtime();" id="mSortAZ" class="px-3 py-1.5 border rounded-xl font-bold bg-indigo-600 text-white">नए पहले (A-Z)</button>
+                <button onclick="state.meritSortOrder = 'za'; filterMeritRealtime();" id="mSortZA" class="px-3 py-1.5 border rounded-xl font-bold bg-slate-50 text-slate-600">पुराने पहले (Z-A)</button>
+              </div>
+            </div>
+
+            <input type="text" id="mLiveSearchInp" oninput="filterMeritRealtime()" placeholder="🔍 विषय, परीक्षा का नाम, परीक्षा कोड या विद्यार्थी के नाम से खोजें..." class="w-full p-2.5 border rounded-xl text-xs bg-slate-50 outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+
           <div id="meritAreaBox" class="bg-white p-4 rounded-2xl border shadow-sm overflow-x-auto">
             <table class="w-full text-xs text-left merit-table border-collapse">
               <thead class="bg-slate-100 text-slate-700 font-bold">
@@ -1903,9 +2200,12 @@
                   <th>विद्यार्थी का नाम</th>
                   <th>वर्ग व रोल</th>
                   <th>परीक्षा नाम व कोड</th>
+                  <th>विषय</th>
                   <th>प्राप्तांक</th>
                   <th>प्रतिशत</th>
+                  <th>लगा समय</th>
                   <th>तारीख</th>
+                  <th class="text-center">एडिट / हटाएं</th>
                 </tr>
               </thead>
               <tbody id="meritTableBody"></tbody>
@@ -1918,33 +2218,140 @@
 
     async function filterMeritRealtime() {
       const tbody = document.getElementById("meritTableBody");
+      const inp = document.getElementById("mLiveSearchInp");
       if (!tbody) return;
 
+      const isOwner = state.activeTeacher && (state.activeTeacher.role === "owner" || state.activeTeacher.username === OWNER_USERNAME);
+      const q = inp ? inp.value.toLowerCase().trim() : "";
       const allResults = await API.getResults();
-      if (allResults.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center py-6 text-slate-400">कोई परिणाम उपलब्ध नहीं है</td></tr>';
+      let list = allResults.slice();
+
+      if (!isOwner && state.activeTeacher) {
+        const teachers = await API.getTeachers();
+        const currentT = teachers.find(t => t.username.toUpperCase() === state.activeTeacher.username.toUpperCase());
+        const canSeeGlobal = currentT && Boolean(currentT.canViewGlobalMerit);
+
+        if (!canSeeGlobal) {
+          const myExams = await API.getExams();
+          const myExamCodes = new Set(
+            myExams
+              .filter(e => String(e.teacherId) === String(state.activeTeacher.id) || 
+                           (e.teacherUsername && e.teacherUsername.toUpperCase() === state.activeTeacher.username.toUpperCase()))
+              .map(e => (e.examCode || "").toUpperCase())
+          );
+          list = list.filter(r => myExamCodes.has((r.examCode || "").toUpperCase()));
+        }
+      }
+
+      if (q) {
+        list = list.filter(r => 
+          (r.studentName || "").toLowerCase().includes(q) || 
+          (r.examName || "").toLowerCase().includes(q) || 
+          (r.examCode || "").toLowerCase().includes(q) || 
+          (r.subject || "").toLowerCase().includes(q)
+        );
+      }
+
+      if (state.meritSortOrder === "az") {
+        list.sort((a, b) => (b.createdTimestamp || 0) - (a.createdTimestamp || 0));
+        document.getElementById("mSortAZ")?.classList.replace("bg-slate-50", "bg-indigo-600");
+        document.getElementById("mSortAZ")?.classList.replace("text-slate-600", "text-white");
+        document.getElementById("mSortZA")?.classList.replace("bg-indigo-600", "bg-slate-50");
+        document.getElementById("mSortZA")?.classList.replace("text-white", "text-slate-600");
+      } else {
+        list.sort((a, b) => (a.createdTimestamp || 0) - (b.createdTimestamp || 0));
+        document.getElementById("mSortZA")?.classList.replace("bg-slate-50", "bg-indigo-600");
+        document.getElementById("mSortZA")?.classList.replace("text-slate-600", "text-white");
+        document.getElementById("mSortAZ")?.classList.replace("bg-indigo-600", "bg-slate-50");
+        document.getElementById("mSortAZ")?.classList.replace("text-white", "text-slate-600");
+      }
+
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center py-6 text-slate-400">कोई परिणाम उपलब्ध नहीं है</td></tr>';
         return;
       }
 
-      tbody.innerHTML = allResults.map((r, i) => `
+      tbody.innerHTML = list.map((r, i) => `
         <tr class="${i === 0 ? 'bg-amber-50/50' : 'hover:bg-slate-50'}">
           <td class="text-center font-black ${i === 0 ? 'text-amber-600' : ''}">#${i+1}</td>
           <td class="font-bold text-slate-800">${r.studentName}</td>
           <td>${r.studentClass} (${r.rollNumber || 'N/A'})</td>
-          <td>${r.examName} (${r.examCode})</td>
+          <td>${r.examName} <span class="font-mono text-indigo-700 block text-[10px]">(${r.examCode})</span></td>
+          <td class="font-semibold text-slate-600">${r.subject || 'सामान्य'}</td>
           <td class="font-black text-indigo-700">${r.marks} / ${r.totalMarks}</td>
           <td class="font-bold text-emerald-600">${r.percentage}%</td>
+          <td class="font-mono text-slate-700">${r.timeTaken || 'N/A'}</td>
           <td>${r.date}</td>
+          <td class="text-center">
+            <div class="flex items-center justify-center gap-1">
+              <button onclick="editMeritResult('${r.id}')" class="text-indigo-600 hover:text-indigo-800 p-1 font-bold" title="मेरिट रिकॉर्ड एडिट करें"><i class="fa-solid fa-pen"></i></button>
+              ${isOwner ? `
+                <button onclick="API.deleteResult('${r.id}').then(() => filterMeritRealtime())" class="text-rose-500 hover:text-rose-700 p-1 font-bold" title="डिलीट करें">
+                  <i class="fa-solid fa-trash"></i>
+                </button>
+              ` : '<span class="text-slate-300">-</span>'}
+            </div>
+          </td>
         </tr>
       `).join("");
     }
 
+    async function editMeritResult(id) {
+      const results = await API.getResults();
+      const r = results.find(x => String(x.id) === String(id));
+      if (!r) return alert("मेरिट रिकॉर्ड नहीं मिला!");
+      const studentName = prompt("विद्यार्थी का नाम:", r.studentName || ""); if (studentName === null) return;
+      const studentClass = prompt("वर्ग:", r.studentClass || ""); if (studentClass === null) return;
+      const rollNumber = prompt("रोल नंबर:", r.rollNumber || ""); if (rollNumber === null) return;
+      const examName = prompt("परीक्षा का नाम:", r.examName || ""); if (examName === null) return;
+      const subject = prompt("विषय:", r.subject || ""); if (subject === null) return;
+      const marksText = prompt("प्राप्तांक:", String(r.marks ?? 0)); if (marksText === null) return;
+      const totalText = prompt("कुल अंक:", String(r.totalMarks ?? 0)); if (totalText === null) return;
+      const date = prompt("परीक्षा की तारीख:", r.date || ""); if (date === null) return;
+      const timeTaken = prompt("परीक्षा में लगा समय:", r.timeTaken || ""); if (timeTaken === null) return;
+      const examCode = prompt("परीक्षा कोड:", r.examCode || ""); if (examCode === null) return;
+      const marks = Number(marksText), totalMarks = Number(totalText);
+      if (!Number.isFinite(marks) || !Number.isFinite(totalMarks) || totalMarks <= 0 || marks < 0) return alert("प्राप्तांक और कुल अंक सही भरें।");
+      const updated = {...r, studentName, studentClass, rollNumber, examName, examCode, subject, marks, totalMarks, timeTaken, percentage: Number((marks / totalMarks * 100).toFixed(2)), date, createdTimestamp: r.createdTimestamp || Date.now()};
+      try {
+        await db.collection("results").doc(String(id)).set(updated, {merge:true});
+        const local = getStore("results").map(x => String(x.id) === String(id) ? updated : x); setStore("results", local);
+        alert("मेरिट रिकॉर्ड अपडेट हो गया।"); filterMeritRealtime();
+      } catch(e) { alert("रिकॉर्ड सेव नहीं हो सका: " + e.message); }
+    }
+
+    function downloadMeritListPDF() {
+      const el = document.getElementById("meritAreaBox");
+      if (!el) return;
+      const printWin = window.open('', '', 'width=950,height=700');
+      const doc = printWin.document;
+      doc.open();
+      doc.write('<!DOCTYPE html><html><head><title>Merit List</title><script src="https://cdn.tailwindcss.com"><\/script><style>.merit-table th, .merit-table td { border: 1px solid #94a3b8; padding: 6px 8px; }</style></head><body class="p-6">');
+      doc.write('<div class="text-center border-b pb-3 mb-4"><h1 class="text-xl font-bold">Smart Exam Portal - Merit List</h1><p class="text-xs text-slate-500">तारीख: ' + new Date().toLocaleDateString("hi-IN") + '</p></div>');
+      doc.write(el.innerHTML);
+      doc.write('</body></html>');
+      doc.close();
+      printWin.focus();
+      setTimeout(() => printWin.print(), 800);
+    }
+
     async function renderTeacherStudents(c) {
+      if (!state.activeTeacher) return navigate("teacher-login");
+      const isOwner = state.activeTeacher.role === "owner" || state.activeTeacher.username === OWNER_USERNAME;
+      
+      if (!isOwner) {
+        alert("🔒 यह अधिकार केवल पोर्टल के मुख्य ओनर के पास है।");
+        return navigate("teacher-dash");
+      }
+
       const students = await API.getStudents();
       c.innerHTML = `
         <div class="space-y-4">
           <div class="flex justify-between items-center bg-white p-4 rounded-2xl border shadow-sm">
-            <h2 class="font-black text-slate-800 text-base">👥 पंजीकृत विद्यार्थी (${students.length})</h2>
+            <div>
+              <h2 class="font-black text-slate-800 text-sm md:text-base">👥 पंजीकृत विद्यार्थी डेटाबेस (${students.length})</h2>
+              <p class="text-xs text-slate-500">सभी विद्यार्थियों के जुड़ने का समय व विवरण</p>
+            </div>
             <button onclick="navigate('teacher-dash')" class="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-xl font-bold">← Dashboard</button>
           </div>
           <div class="bg-white rounded-2xl border overflow-x-auto p-4">
@@ -1953,19 +2360,29 @@
                 <tr>
                   <th>विद्यार्थी का नाम</th>
                   <th>वर्ग</th>
+                  <th>रोल नं.</th>
                   <th>यूज़रनेम</th>
                   <th>पासवर्ड</th>
-                  <th>जुड़ने की तारीख</th>
+                  <th>जुड़ने की तारीख व समय</th>
+                  <th>लॉगिन हिस्ट्री</th>
+                  <th class="text-center w-16">हटाएं</th>
                 </tr>
               </thead>
               <tbody>
-                ${students.length === 0 ? '<tr><td colspan="5" class="p-4 text-center text-slate-400">कोई विद्यार्थी नहीं है</td></tr>' : students.map(s => `
+                ${students.length === 0 ? '<tr><td colspan="8" class="p-4 text-center text-slate-400">कोई विद्यार्थी पंजीकृत नहीं है</td></tr>' : students.map(s => `
                   <tr>
                     <td class="font-bold text-slate-800">${s.name}</td>
                     <td>${s.sClass}</td>
+                    <td>${s.roll || 'N/A'}</td>
                     <td class="font-mono font-bold text-indigo-700">${s.username}</td>
                     <td class="font-mono text-emerald-700 font-bold">${s.password}</td>
-                    <td>${s.joinedFull || 'N/A'}</td>
+                    <td class="font-mono text-slate-600 font-semibold">${s.joinedFull || 'N/A'}</td>
+                    <td><button onclick="showStudentLoginHistory('${s.username}')" class="bg-indigo-50 text-indigo-700 px-2 py-1 rounded-lg font-bold">इतिहास देखें</button></td>
+                    <td class="text-center">
+                      <button onclick="confirmDeleteStudentRecord('${s.username}', '${s.name}')" class="text-rose-600 hover:text-rose-800 p-1 font-bold" title="विद्यार्थी हटाएं">
+                        <i class="fa-solid fa-trash"></i>
+                      </button>
+                    </td>
                   </tr>
                 `).join("")}
               </tbody>
@@ -1975,6 +2392,21 @@
       `;
     }
 
+    async function showStudentLoginHistory(username) {
+      const history = await API.getStudentLoginHistory(username);
+      if (!history.length) return alert("इस विद्यार्थी का लॉगिन इतिहास अभी उपलब्ध नहीं है।");
+      const lines = history.map((h, i) => `${i+1}. ${h.date || "तारीख नहीं"} | ${h.time || "समय नहीं"}`).join("\n");
+      alert(`यूज़रनेम: ${username}\nकुल लॉगिन: ${history.length}\n\n${lines}`);
+    }
+
+    function confirmDeleteStudentRecord(username, name) {
+      openModal("विद्यार्थी हटाएं?", `क्या आप विद्यार्थी "${name}" (${username}) का खाता पूरी तरह हटाना चाहते हैं?`, async () => {
+        await API.deleteStudent(username);
+        alert("विद्यार्थी खाता हटा दिया गया!");
+        renderTeacherStudents(document.getElementById("app"));
+      });
+    }
+
     async function renderTeacherTrash(c) {
       const exams = await API.getExams();
       const trash = exams.filter(e => e.isDeleted);
@@ -1982,7 +2414,10 @@
       c.innerHTML = `
         <div class="max-w-2xl mx-auto space-y-4">
           <div class="flex justify-between items-center bg-white p-4 rounded-2xl border shadow-sm">
-            <h2 class="font-black text-rose-600 text-sm">🗑️ रीसायकल बिन</h2>
+            <div>
+              <h2 class="font-black text-rose-600 text-sm">🗑️ रीसायकल बिन (15 दिन सुरक्षा)</h2>
+              <p class="text-[11px] text-slate-400">15 दिन बाद परीक्षाएं स्वतः परमानेंट हट जाएंगी</p>
+            </div>
             <button onclick="navigate('teacher-dash')" class="text-xs bg-slate-800 text-white px-3 py-1.5 rounded-xl font-bold">← Dashboard</button>
           </div>
           <div class="bg-white rounded-2xl border p-4 space-y-2.5">
@@ -1990,8 +2425,9 @@
               <div class="flex justify-between items-center p-3 border rounded-xl bg-rose-50/40 text-xs">
                 <div>
                   <b class="text-slate-800 block">${t.examName} (${t.examCode})</b>
+                  <span class="text-[10px] text-slate-400">डिलीट हुआ: ${t.deletedDate || 'हाल ही में'}</span>
                 </div>
-                <button onclick="API.restoreExam('${t.id || t.examCode}').then(() => renderTeacherTrash(document.getElementById('app')))" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl font-bold shadow">
+                <button onclick="API.restoreExam('${t.id}').then(() => renderTeacherTrash(document.getElementById('app')))" class="bg-emerald-600 text-white px-3 py-1.5 rounded-xl font-bold shadow">
                   ⟲ वापस लाएँ (Restore)
                 </button>
               </div>
@@ -2003,17 +2439,17 @@
 
     async function downloadTeacherPaperPDF(examId) {
       const exams = await API.getExams();
-      const ex = exams.find(e => String(e.id) === String(examId) || String(e.examCode) === String(examId));
+      const ex = exams.find(e => e.id === examId);
       if (!ex) return;
 
       const printWin = window.open('', '', 'width=900,height=700');
       const doc = printWin.document;
       doc.open();
       doc.write('<!DOCTYPE html><html><head><title>' + ex.examName + '</title><script src="https://cdn.tailwindcss.com"><\/script></head><body class="p-8">');
-      doc.write('<div class="text-center border-b pb-4 mb-4"><h1 class="text-xl font-black">' + (ex.instituteName || '') + '</h1><h2 class="text-lg font-bold">' + ex.examName + '</h2><p class="text-xs text-slate-500">वर्ग: ' + (ex.classes ? ex.classes.join(" + ") : (ex.class || 'All')) + ' | विषय: ' + (ex.subject || 'General') + ' | Code: ' + ex.examCode + '</p></div>');
+      doc.write('<div class="text-center border-b pb-4 mb-4"><h1 class="text-xl font-black">' + (ex.instituteName || '') + '</h1><h2 class="text-lg font-bold">' + ex.examName + '</h2><p class="text-xs text-slate-500">वर्ग: ' + (ex.classes ? ex.classes.join(" + ") : ex.class) + ' | विषय: ' + (ex.subject || 'General') + ' | Code: ' + ex.examCode + '</p></div>');
       doc.write('<div class="space-y-4 text-xs">');
 
-      (ex.questions || []).forEach((q, i) => {
+      ex.questions.forEach((q, i) => {
         doc.write('<div class="border-b pb-3 space-y-1"><div class="font-bold text-sm">Q' + (i+1) + '. ' + q.questionText + '</div>');
         if (q.photo) doc.write('<div><img src="' + q.photo + '" style="max-height:180px; margin: 4px 0;" /></div>');
         doc.write('<div class="grid grid-cols-2 gap-2 pl-3"><span>(A) ' + q.options[0] + '</span><span>(B) ' + q.options[1] + '</span><span>(C) ' + q.options[2] + '</span><span>(D) ' + q.options[3] + '</span></div>');
@@ -2081,8 +2517,13 @@
       }
     }
 
+        // रिफ्रेश होने पर सीधे डैशबोर्ड खोलना
     window.addEventListener("DOMContentLoaded", () => {
-      if (state.activeTeacher) {
+      const p = new URLSearchParams(window.location.search).get("exam");
+      if (p) {
+        if (state.activeStudent) navigate("student-dashboard");
+        else navigate("student-login");
+      } else if (state.activeTeacher) {
         navigate("teacher-dash");
       } else if (state.activeStudent) {
         navigate("student-dashboard");
@@ -2092,4 +2533,4 @@
     });
   </script>
 </body>
-</html>
+</html> 
